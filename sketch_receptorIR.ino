@@ -1,38 +1,30 @@
 /*
  * Sketch "Sniffer" de Sinais IR (Versão Simplificada)
  * * Biblioteca: IRremote.hpp (v3.0+ por Armin Joachimsmeyer)
- * Objetivo: Capturar e imprimir o array rawData de um controle de Ar Condicionado.
- * * Hardware:
- * - ESP32
- * - Receptor IR (ex: VS1838B)
- * * Circuito:
- * - Pino VCC do Receptor -> Pino 3V3 do ESP32
- * - Pino GND do Receptor -> Pino GND do ESP32
- * - Pino Data/Out do Receptor -> Pino GPIO 14 (definido em kRecvPin)
+ * Objetivo: Capturar e imprimir o array rawData de um controle Infravermelho.
+ * --- Hardware ---
+ * * MÓDULO RECEPTOR (VS1838B):
+ * - Pino VCC  -> ESP32 5V
+ * - Pino GND  -> ESP32 GND
+ * - Pino Data -> ESP32 GPIO 14 (definido em kRecvPin)
  */
 
 #include <Arduino.h>
+#include <IRremote.hpp>
 
-/*
- * Para controles de Ar Condicionado, um buffer maior é essencial.
- * O padrão (100) é muito pequeno. O seu exemplo usa 700, o que é excelente.
- */
 #if !defined(RAW_BUFFER_LENGTH)
 #define RAW_BUFFER_LENGTH 700
 #endif
 
-// Defina o pino de recepção
 const int kRecvPin = 14;
-
-#include <IRremote.hpp>
 
 void setup() {
     Serial.begin(115200);
     while (!Serial) {
-        delay(50); // Espera o Serial Monitor
+        delay(50);
     }
 
-    // Inicia o receptor IR
+    // Inicia o RECEPTOR
     IrReceiver.begin(kRecvPin, ENABLE_LED_FEEDBACK); // ENABLE_LED_FEEDBACK piscará o LED_BUILTIN
 
     Serial.print(F("Pronto para receber sinais IR no pino: "));
@@ -41,7 +33,6 @@ void setup() {
 }
 
 void loop() {
-    // Verifica se um código foi recebido
     if (IrReceiver.decode()) {
         Serial.println();
         Serial.println(F("--- NOVO CÓDIGO CAPTURADO ---"));
