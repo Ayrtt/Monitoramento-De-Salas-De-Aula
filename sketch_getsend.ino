@@ -1,17 +1,21 @@
 /*
- * Sketch "Clone de TV" (Recebe 1x, Envia Infinitamente)
+ * Sketch "Get & Send" (Recebe 1x, Envia Infinitamente)
  * Biblioteca: IRremote.hpp (v3.0+ por Armin Joachimsmeyer)
- * Objetivo: Capturar o primeiro comando IR (ex: "Vol +") e
- * retransmiti-lo a cada 2 segundos.
+ * Objetivo: Capturar o primeiro comando IR (ex: "ON/OFF") e
+ * retransmiti-lo periodicamente.
  *
  * --- Hardware ---
- * * RECEPTOR (VS1838B):
- * - Pino VCC  -> ESP32 3V3
+ * * MÓDULO RECEPTOR (VS1838B):
+ * - Pino VCC  -> ESP32 5V
  * - Pino GND  -> ESP32 GND
- * - Pino Data -> Resistor 10kΩ -> ESP32 GPIO 14 (definido em kRecvPin)
+ * - Pino Data -> ESP32 GPIO 14 (definido em kRecvPin)
+ * * TRANSISTOR BC547 (NPN):
+ * - COLETOR  <- Catodo do LED
+ * - BASE     <- Resistor 220Ω <- ESP32 GPIO 27 (definido em kSendPin)
+ * - EMISSOR  -> ESP32 GND
  * * TRANSMISSOR (LED IR):
- * - ESP32 GPIO 4 -> Resistor 220Ω -> Perna LONGA (Anodo) do LED
- * - Perna CURTA (Catodo) do LED   -> ESP32 GND
+ * - Perna LONGA (Anodo) do LED  <- ESP32 5V
+ * - Perna CURTA (Catodo) do LED <- Coletor do transistor
  */
 
 #include <Arduino.h>
@@ -65,13 +69,12 @@ void loop() {
                 IrReceiver.printIRResultShort(&Serial);
             }
 
-            //Muda a flag
-            g_codeHasBeenCaptured = true;
+            g_codeHasBeenCaptured = true;    //Muda a flag
             IrReceiver.stop();
 
             Serial.println(F("----------------------------------"));
             Serial.println(F("Receptor DESLIGADO."));
-            Serial.println(F("Iniciando retransmissão em 2 segundos..."));
+            Serial.println(F("Iniciando transmissão em 2 segundos..."));
             
             delay(2000);
         }
