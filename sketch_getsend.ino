@@ -15,14 +15,17 @@
  * - EMISSOR  -> ESP32 GND
  * * TRANSMISSOR (LED IR):
  * - Perna LONGA (Anodo) do LED  <- ESP32 5V
- * - Perna CURTA (Catodo) do LED <- Coletor do transistor
+ * - Perna CURTA (Catodo) do LED -> Coletor do transistor
  */
 
 #include <Arduino.h>
+
+#define RECORD_GAP_MICROS 100000
+
 #include <IRremote.hpp>
 
 #if !defined(RAW_BUFFER_LENGTH)
-#define RAW_BUFFER_LENGTH 700
+#define RAW_BUFFER_LENGTH 1024
 #endif
 
 const int kRecvPin = 14;
@@ -31,7 +34,7 @@ const int kSendPin = 27;
 bool g_codeHasBeenCaptured = false;      // Flag para controlar o estado
 IRData g_capturedIRData;                 // Armazena dados de protocolos conhecidos
 uint8_t g_capturedRawData[RAW_BUFFER_LENGTH]; // Armazena dados RAW (se desconhecido)
-uint8_t g_capturedRawLength;             // Tamanho dos dados RAW
+uint16_t g_capturedRawLength;             // Tamanho dos dados RAW
 
 void setup() {
     Serial.begin(115200);
@@ -52,7 +55,7 @@ void setup() {
 
 void loop() {
     if (!g_codeHasBeenCaptured) {
-        if (IrReceiver.decode()) {
+        if ((IrReceiver.decode()) ) {
             Serial.println();
             Serial.println(F("--- CÓDIGO CAPTURADO! ---"));
             
@@ -74,9 +77,8 @@ void loop() {
 
             Serial.println(F("----------------------------------"));
             Serial.println(F("Receptor DESLIGADO."));
-            Serial.println(F("Iniciando transmissão em 2 segundos..."));
-            
-            delay(2000);
+            Serial.println(F("Iniciando transmissão..."));
+
         }
     }
     else {
@@ -90,6 +92,6 @@ void loop() {
             Serial.println(F(")"));
             IrSender.write(&g_capturedIRData, NO_REPEATS);
         }
-        delay(2000);
+        delay(5000);
     }
 }
