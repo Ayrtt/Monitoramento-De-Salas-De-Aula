@@ -1,4 +1,4 @@
---- DESLIGAR 22 GRAUS ---
+--- DESLIGAR 22 GRAUS --- // TURN OFF AT 22 DEGREES
 rawIRTimings[456]: 
  -3276750
  +3100,-1600
@@ -61,7 +61,7 @@ rawIRTimings[456]:
  + 450,-1100 + 450,-1150 + 450
 Duration=301600us
 
---- 16 GRAUS ---
+--- 16 GRAUS --- // GRAUS = DEGREES -> 16ºC
 rawIRTimings[456]: 
  -3262200
  +3050,-1650
@@ -1067,4 +1067,5 @@ rawIRTimings[456]:
  + 450,- 350 + 450,-1150 + 450,- 350 + 500,- 350
  + 450,-1150 + 450,-1100 + 450,-1150 + 450,-1150
  + 450,- 350 + 450,-1150 + 450
+
 Duration=303050us
