@@ -6,9 +6,10 @@
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h> 
 #include <FirebaseJson.h>
+#include <string.h>
 #include "time.h"
 
-#include "config.h" // Config.h utilizado para esse código está comentado a partir da linha 108
+#include "config.h"
 
 void processData(AsyncResult &aResult);
 void setup_wifi();
@@ -33,12 +34,13 @@ void setup() {
   setup_ssl(); 
   setup_stream_ssl();
   setup_firebase();
-  
+
+  pinMode(LED_PIN, OUTPUT);
+
   // Usando Database.get no modo SSE (true) para iniciar o Stream.
   // processData é usado para receber tanto os erros/eventos QUANTO os dados de Stream.
   Database.get(streamClient, PATH_CONTROLE, processData, true /* SSE mode */, "streamControlTask");
 }
-
 
 void loop() {
   app.loop();
@@ -57,21 +59,38 @@ void processData(AsyncResult &aResult) {
     
   // Lógica de Impressão de DADOS (Payload)
   if (aResult.available()) {
-      // Converte o resultado assíncrono para o formato de Resultado do RealtimeDatabase
-      RealtimeDatabaseResult &stream = aResult.to<RealtimeDatabaseResult>();
+    // Converte o resultado assíncrono para o formato de Resultado do RealtimeDatabase
+    RealtimeDatabaseResult &stream = aResult.to<RealtimeDatabaseResult>();
       
-      if (stream.isStream()) {
-
-          Serial.println("=========================================");
-          Firebase.printf("[STREAM EVENTO] Evento: %s\n", stream.event().c_str());
-          Firebase.printf("[STREAM DADOS] Caminho: %s\n", stream.dataPath().c_str());
-          Firebase.printf("[STREAM DADOS] Payload: %s\n", stream.to<const char *>());
-          Serial.println("=========================================");
+    if (stream.isStream()) {
+      Serial.println("=========================================");
+      Firebase.printf("[STREAM EVENTO] Evento: %s\n", stream.event().c_str());
+      Firebase.printf("[STREAM DADOS] Caminho: %s\n", stream.dataPath().c_str());
+      Firebase.printf("[STREAM DADOS] Payload: %s\n", stream.to<const char *>());
+          
+      if((strcmp(stream.dataPath().c_str(),"/ar/temperatura_flag") == 0) && (stream.to<int>() == 1)){
+        
+        Serial.println(Database.get<int>(aClient, PATH_TEMPERATURA));
+        
+        
       } 
-      // Caso contrário, apenas imprime o payload (pode ser o resultado de um GET avulso ou SET)
-      else if (aResult.uid() != "streamControlTask") {
-          Firebase.printf("[PAYLOAD] Task: %s, Payload: %s\n", aResult.uid().c_str(), aResult.c_str());
+      else if (strcmp(stream.dataPath().c_str(),"/ar/estado") == 0) {
+        Serial.println("ar_estado");
       }
+      else if (strcmp(stream.dataPath().c_str(),"/ar/estado") == 1) {
+        Serial.println("ar_estado");
+      }
+      else if (strcmp(stream.dataPath().c_str(),"/luz/estado") == 0) {
+        digitalWrite(LED_PIN, HIGH);
+      }
+      else if (strcmp(stream.dataPath().c_str(),"/luz/estado") == 1) {
+        digitalWrite(LED_PIN, LOW);
+      }
+    }
+    // Caso contrário, apenas imprime o payload (pode ser o resultado de um GET avulso ou SET)
+    else if (aResult.uid() != "streamControlTask") {
+      Firebase.printf("[PAYLOAD] Task: %s, Payload: %s\n", aResult.uid().c_str(), aResult.c_str());
+    }
   }
 }
 
@@ -104,31 +123,3 @@ void setup_firebase(){
   app.getApp<RealtimeDatabase>(Database);
   Database.url(FIREBASE_DATABASE_URL);
 }
-
-/* config h
-
-#ifndef CONFIG_H
-#define CONFIG_H
-
-// --- Configurações de Rede ---
-#define WIFI_SSID "brisa-644244"
-#define WIFI_PASSWORD "0ybojsh2"
-
-// --- Configurações do Firebase ---
-#define FIREBASE_API_KEY "AIzaSyB6VS7sqzxv84g-WTGk0zxmrZuP6xv9pow"
-#define FIREBASE_DATABASE_URL "https://monitoramento-de-dispositivos-default-rtdb.firebaseio.com"
-#define FIREBASE_USER_EMAIL "ayrtton.lucas@academico.ifpb.edu.br"
-#define FIREBASE_USER_PASSWORD "teste1"
-
-// ID do dispositivo para facilitar a troca no futuro
-#define DEVICE_ID "0001"
-
-// Caminhos para os registros históricos
-#define PATH_CONTROLE "/Dispositivos/" DEVICE_ID
-
-// Caminhos específicos para o controle de Temperatura
-#define PATH_TEMPERATURA_FLAG PATH_CONTROLE "/temperatura_flag"
-#define PATH_TEMPERATURA PATH_CONTROLE "/temperatura"
-
-#endif
-*/
