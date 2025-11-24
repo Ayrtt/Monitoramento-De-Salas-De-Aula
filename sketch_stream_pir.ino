@@ -17,6 +17,8 @@ void setup_wifi();
 void setup_ssl();
 void setup_stream_ssl();
 void setup_firebase();
+String getTimeDate();
+void sendRegisterPIR(bool presenca);
 
 FirebaseApp app;
 WiFiClientSecure ssl_client, stream_ssl_client; 
