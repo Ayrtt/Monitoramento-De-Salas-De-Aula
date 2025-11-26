@@ -9,7 +9,6 @@
 #include <string.h>
 #include "time.h"
 
-#include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
 
