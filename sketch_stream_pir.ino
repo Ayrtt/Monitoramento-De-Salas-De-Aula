@@ -112,13 +112,14 @@ void processData(AsyncResult &aResult) {
       Firebase.printf("[STREAM DADOS] Caminho: %s\n", stream.dataPath().c_str());
       Firebase.printf("[STREAM DADOS] Payload: %s\n", stream.to<const char *>());
 
-      if((strcmp(stream.event().c_str(), "put") == 0))  
+      if((strcmp(stream.event().c_str(), "put") == 0)) {
         if (strcmp(stream.dataPath().c_str(),"/luz/estado") == 0) {
           bool novo_estado = stream.to<bool>();
           if (novo_estado != digitalRead(RELAY_PIN)) {
             sendRegisterPIR(novo_estado);
           }
         }
+      }
     }
     // Caso contrário, apenas imprime o payload (pode ser o resultado de um GET avulso ou SET)
     else if (aResult.uid() != "streamControlTask") {
