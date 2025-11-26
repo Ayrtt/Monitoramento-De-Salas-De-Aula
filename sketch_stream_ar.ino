@@ -11,8 +11,6 @@
 
 #include <DHT.h>
 #include <DHT_U.h>
-
-#define RECORD_GAP_MICROS 100000 //Necessário para enviar os dois pacotes do comando
 #include <IRremote.hpp>
 
 #include "config.h"
@@ -43,9 +41,9 @@ RealtimeDatabase Database;
 
 UserAuth user_auth(FIREBASE_API_KEY, FIREBASE_USER_EMAIL, FIREBASE_USER_PASSWORD);
 
-DHT_Unified dht(DHTPIN, DHTTYPE);
+DHT_Unified dht(DHT_PIN, DHTTYPE);
 
-bool estado = Database.get<bool>(aClient, PATH_AR_ESTADO);;
+bool estado = false;
 unsigned long ultima_coleta = 0;
 
 void setup() {
@@ -58,7 +56,17 @@ void setup() {
   setup_firebase();
   dht.begin();
 
-  IrSender.begin(kSendPin, false); 
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+
+  IrSender.begin(LED_PIN, false); 
+
+  Serial.println("Aguardando autenticação...");
+  while (!app.ready()) {
+      app.loop();
+      delay(100);
+  }
+  Serial.println("Firebase pronto!");
+
   // Usando Database.get no modo SSE (true) para iniciar o Stream.
   // processData é usado para receber tanto os erros/eventos QUANTO os dados de Stream.
   Database.get(streamClient, PATH_CONTROLE, processData, true /* SSE mode */, "streamControlTask");
@@ -69,13 +77,21 @@ void loop() {
   delay(10);
   int temp = getTemperaturaDHT();
 
-  if (millis() - ultima_coleta > 5000){
-    sendRegisterAr(estado, temp);
-    ultima_coleta = millis();
-  }
-  else if (temp != Database.get<int>(aClient, PATH_TEMPERATURA)){
-    sendRegisterAr(estado, temp);
-  }
+  if (app.ready()) {
+    int temp = getTemperaturaDHT();
+
+    // Só processa se a leitura for válida (> -100, por exemplo)
+    if (temp > -100) {
+      if (millis() - ultima_coleta > DHT_READ_DELAY){ 
+            Serial.printf("Telemetria periódica: %d°C\n", temp);
+            sendRegisterAr(estado, temp);
+            ultima_coleta = millis();
+      }
+      else if (temp != Database.get<int>(aClient, PATH_TEMPERATURA)){
+        sendRegisterAr(estado, temp);
+      }
+    }   
+  }  
 }
 
 void processData(AsyncResult &aResult) {
@@ -103,17 +119,17 @@ void processData(AsyncResult &aResult) {
         if((strcmp(stream.dataPath().c_str(),"/ar/temperatura_flag") == 0) && (stream.to<int>() == 1)){        
           int temperatura = Database.get<int>(aClient, PATH_TEMPERATURA) - 16;
           sendCodeAr(temperatura);
-          sendRegistroAr(estado, temperatura);
+          sendRegisterAr(estado, temperatura);
         } 
         else if (strcmp(stream.dataPath().c_str(),"/ar/estado") == 0) {
           bool novo_estado = stream.to<bool>();
           if (novo_estado == false && estado == true) {
-            desligar();
-            sendRegistroAr(estado, temperatura);     
+            sendCodeArOFF();
+            sendRegisterAr(estado, getTemperaturaDHT());     
           }   
           else if (novo_estado == true && estado == false) {
             sendCodeAr(22);
-            sendRegistroAr(estado, 22);
+            sendRegisterAr(estado, 22);
           }
         }
       }
@@ -160,6 +176,11 @@ void setup_firebase(){
 int getTemperaturaDHT() {
   sensors_event_t event;
   dht.temperature().getEvent(&event);
+  if (isnan(event.temperature)) {
+    // Retorna valor sentinela de erro
+    Serial.println("Erro ao capturar temperatura.");
+    return -999; 
+  }
   return (int)event.temperature;
 }
 
@@ -178,6 +199,8 @@ void sendRegisterAr(bool estado, int temperatura) {
   object_t jsonData, dataHoraObj, estadoObj, temperaturaObj;
   JsonWriter writer;
 
+  if (temperatura = -999){temperatura = 0;}
+
   writer.create(dataHoraObj, "dataHora", string_t(getTimeDate()));
   writer.create(estadoObj, "estado", estado ? 1 : 0);
   writer.create(temperaturaObj, "temperatura", temperatura);
@@ -192,14 +215,14 @@ void sendRegisterAr(bool estado, int temperatura) {
     Database.set<int>(aClient, PATH_AR_ESTADO, estado);
   }
   
-  Database.push<object_t>(aClient, PATH_LUZ_REGISTROS, jsonData, processData, "pushRegistroTask");
+  Database.push<object_t>(aClient, PATH_AR_REGISTROS, jsonData, processData, "pushRegistroTask");
 }
 
 void sendCodeAr(int temperatura){
   if (!estado){estado = true;}
   
   const uint8_t* dados = arr_temperaturas_on[temperatura];
-  uint16_t tamanho = arr_temperatura_tamanhos[temperatura];
+  uint16_t tamanho = arr_temperaturas_tamanhos[temperatura];
 
   IrSender.sendRaw(dados, tamanho, 38);
 }
@@ -207,108 +230,5 @@ void sendCodeAr(int temperatura){
 void sendCodeArOFF() {
   if (estado){estado = false;}
 
-  int tamanhoDesligar = sizeof(desligar) /  sizeof(desligar[0];)
-
-  IrSender.sendRaw(desligar, tamanho, 38);
+  IrSender.sendRaw(desligar, desligar_LEN, 38);
 }
-
-/* config.h
-// config.h
-
-#ifndef CONFIG_H
-#define CONFIG_H
-
-// --- Configurações de Rede ---
-#define WIFI_SSID "brisa-644244"
-#define WIFI_PASSWORD "0ybojsh2"
-
-// --- Configurações do Firebase ---
-#define FIREBASE_API_KEY "AIzaSyB6VS7sqzxv84g-WTGk0zxmrZuP6xv9pow"
-#define FIREBASE_DATABASE_URL "https://monitoramento-de-dispositivos-default-rtdb.firebaseio.com"
-#define FIREBASE_USER_EMAIL "ayrtton.lucas@academico.ifpb.edu.br"
-#define FIREBASE_USER_PASSWORD "teste1"
-
-// ID do dispositivo para facilitar a troca no futuro
-#define DEVICE_ID "/0001"
-
-// Caminho para nó principal
-#define PATH_CONTROLE "/Dispositivos" DEVICE_ID
-
-// Caminhos específicos para o controle do ar-condicionado
-#define PATH_AR_ESTADO PATH_CONTROLE "/ar/estado"
-#define PATH_AR_REGISTROS PATH_CONTROLE "/registros/ar"
-#define PATH_TEMPERATURA PATH_CONTROLE "/ar/temperatura"
-#define PATH_TEMPERATURA_FLAG PATH_CONTROLE "/ar/temperatura_flag"
-
-// --- Configurações do Hardware (Pinos) ---
-#define LED_PIN 27
-#define DHT_PIN 14
-#define DHTTYPE DHT11
-
-// --- Configurações do Servidor de Tempo (NTP) ---
-#define NTP_SERVER "pool.ntp.org"
-#define GMT_OFFSET_SEC -10800      // Offset para GMT-3 (Brasil)
-#define DAYLIGHT_OFFSET_SEC 0
-
-#include <Arduino.h>
-
-const uint8_t ligar_16[] = { /* ... cole os ticks do 16 aqui ...  };
-const uint8_t ligar_17[] = { /* ... cole os ticks do 17 aqui ...  };
-const uint8_t ligar_18[] = { /* ... cole os ticks do 18 aqui ... / };
-const uint8_t ligar_19[] = { /* ... cole os ticks do 19 aqui ... / };
-const uint8_t ligar_20[] = { /* ... cole os ticks do 20 aqui ... / };
-const uint8_t ligar_21[] = { /* ... cole os ticks do 21 aqui ... / };
-const uint8_t ligar_22[] = { /* ... cole os ticks do 22 aqui ... / };
-const uint8_t ligar_23[] = { /* ... cole os ticks do 23 aqui ... / };
-const uint8_t ligar_24[] = { /* ... cole os ticks do 24 aqui ... / };
-const uint8_t ligar_25[] = { /* ... cole os ticks do 25 aqui ... / };
-const uint8_t ligar_26[] = { /* ... cole os ticks do 26 aqui ... / };
-const uint8_t ligar_27[] = { /* ... cole os ticks do 27 aqui ... / };
-const uint8_t ligar_28[] = { /* ... cole os ticks do 28 aqui ... / };
-const uint8_t ligar_29[] = { /* ... cole os ticks do 29 aqui ... / };
-const uint8_t ligar_30[] = { /* ... cole os ticks do 30 aqui ... / };
-const uint8_t ligar_31[] = { /* ... cole os ticks do 31 aqui ... / };
-
-const uint8_t desligar_16[] = { /* ... cole os ticks do 16 aqui ... / };
-const uint8_t desligar_17[] = { /* ... cole os ticks do 17 aqui ... / };
-const uint8_t desligar_18[] = { /* ... cole os ticks do 18 aqui ... / };
-const uint8_t desligar_19[] = { /* ... cole os ticks do 19 aqui ... / };
-const uint8_t desligar_20[] = { /* ... cole os ticks do 20 aqui ... / };
-const uint8_t desligar_21[] = { /* ... cole os ticks do 21 aqui ... / };
-const uint8_t desligar_22[] = { /* ... cole os ticks do 22 aqui ... / };
-const uint8_t desligar_23[] = { /* ... cole os ticks do 23 aqui ... / };
-const uint8_t desligar_24[] = { /* ... cole os ticks do 24 aqui ... / };
-const uint8_t desligar_25[] = { /* ... cole os ticks do 25 aqui ... / };
-const uint8_t desligar_26[] = { /* ... cole os ticks do 26 aqui ... / };
-const uint8_t desligar_27[] = { /* ... cole os ticks do 27 aqui ... / };
-const uint8_t desligar_28[] = { /* ... cole os ticks do 28 aqui ... / };
-const uint8_t desligar_29[] = { /* ... cole os ticks do 29 aqui ... / };
-const uint8_t desligar_30[] = { /* ... cole os ticks do 30 aqui ... / };
-const uint8_t desligar_31[] = { /* ... cole os ticks do 31 aqui ... / };
-
-const uint8_t* const arr_temperaturas_on[] = {
-  ligar_16, ligar_17, ligar_18, ligar_19, 
-  ligar_20, ligar_21, ligar_22, ligar_23, 
-  ligar_24, ligar_25, ligar_26, ligar_27, 
-  ligar_28, ligar_29, ligar_30, ligar_31
-};
-
-const uint8_t* const arr_temperaturas_off[] = {
-  desligar_16, desligar_17, desligar_18, desligar_19, desligar_20, 
-  desligar_21, desligar_22, desligar_23, desligar_24, desligar_25, 
-  desligar_26, desligar_27, desligar_28, desligar_29, desligar_30, 
-  desligar_31
-};
-
-const uint16_t arr_temperaturas_TAMANHOS[] = {
-  sizeof(ligar_16), sizeof(ligar_17), sizeof(ligar_18), sizeof(ligar_19),
-  sizeof(ligar_20), sizeof(ligar_21), sizeof(ligar_22), sizeof(ligar_23),
-  sizeof(ligar_24), sizeof(ligar_25), sizeof(ligar_26), sizeof(ligar_27),
-  sizeof(ligar_28), sizeof(ligar_29), sizeof(ligar_30), sizeof(ligar_31)
-};
-
-const uint16_t ligar_OFF_LEN = sizeof(ligar_OFF);
-
-
-#endif
-*/
