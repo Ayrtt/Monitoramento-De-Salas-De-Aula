@@ -47,7 +47,7 @@ DHT_Unified dht(DHT_PIN, DHTTYPE);
 // --- Variáveis Globais ---
 bool estado = false; 
 unsigned long ultima_coleta = 0;
-int temperatura_alvo = 24; // Valor padrão
+int temperatura_alvo = 24; 
 
 void setup() {
   Serial.begin(115200); 
@@ -62,7 +62,6 @@ void setup() {
   setup_firebase();
   dht.begin();
 
-  // Inicializa o IR no pino LED_PIN (27)
   IrSender.begin(LED_PIN); 
 
   Serial.println("Aguardando autenticação...");
@@ -72,7 +71,6 @@ void setup() {
   }
   Serial.println("Firebase pronto!");
 
-  // Inicia o Stream. O estado inicial virá automaticamente.
   Database.get(streamClient, PATH_CONTROLE, processData, true /* SSE mode */, "streamControlTask");
 }
 
@@ -81,11 +79,11 @@ void loop() {
   
   if (app.ready()) {
       if (millis() - ultima_coleta > DHT_READ_DELAY) {
-          int temp = getTemperaturaDHT();
+          int tempLida = getTemperaturaDHT();
 
-          if (temp > -100) {
-              Serial.printf("Telemetria: %d°C (Estado AR: %s)\n", temp, estado ? "ON" : "OFF");
-              sendRegisterAr(estado, temp);
+          if (tempLida > -100) {
+              Serial.printf("Telemetria: %d°C (Estado AR: %s)\n", tempLida, estado ? "ON" : "OFF");
+              sendRegisterAr(estado, tempLida);
               ultima_coleta = millis();
           }
       }
@@ -109,34 +107,35 @@ void processData(AsyncResult &aResult) {
     if (stream.isStream()) {
       if (stream.event() == "put" || stream.event() == "patch") {
           
+          // Ignora logs de registros para não travar (payload gigante)
           if (stream.dataPath().startsWith("/registros")) return;
-
-          Serial.println("=========================================");
-          Firebase.printf("[STREAM EVENTO] Evento: %s\n", stream.event().c_str());
-          Firebase.printf("[STREAM DADOS] Caminho: %s\n", stream.dataPath().c_str());
           
-          // Sincroniza temperatura alvo
-          if (stream.dataPath().equals("/ar/temperatura")) {
-              temperatura_alvo = stream.to<int>();
-              Serial.printf("[SYNC] Temperatura alvo: %d\n", temperatura_alvo);
+          // PROTEÇÃO CONTRA PAYLOAD GIGANTE NO ROOT
+          // Se o caminho for "/", o payload é o banco todo. Não imprima!
+          if (stream.dataPath() == "/") {
+             Serial.println("[STREAM] Evento de sincronização inicial (ROOT) recebido. Ignorando impressão de payload gigante.");
+          } else {
+             Serial.println("=========================================");
+             Firebase.printf("[STREAM EVENTO] Evento: %s\n", stream.event().c_str());
+             Firebase.printf("[STREAM DADOS] Caminho: %s\n", stream.dataPath().c_str());
+             Firebase.printf("[STREAM DADOS] Payload: %s\n", stream.to<const char *>());
           }
           
-          // Lógica de Flag de Temperatura
+          // Sincroniza temperatura ALVO
+          if (stream.dataPath().equals("/ar/temperatura")) {
+              temperatura_alvo = stream.to<int>();
+              Serial.printf("[SYNC] Nova temperatura alvo: %d\n", temperatura_alvo);
+          }
+          // Flag de Temperatura
           else if(stream.dataPath().equals("/ar/temperatura_flag") && stream.to<bool>() == true){        
             Serial.println("[FLAG] Comando de Temperatura recebido.");
-            
-            // Dispara GET assíncrono para garantir o valor mais recente
+            // Busca o valor atualizado
             Database.get(aClient, PATH_TEMPERATURA, processData, false, "getTempTask");
             
-            // Usa o valor atual enquanto o GET não chega (para resposta rápida)
-            if (temperatura_alvo >= 16 && temperatura_alvo <= 31) {
-                sendCodeAr(temperatura_alvo);
-                sendRegisterAr(true, temperatura_alvo);
-            }
+            // Reseta o flag IMEDIATAMENTE para evitar reentrância
             Database.set<bool>(aClient, PATH_TEMPERATURA_FLAG, false);
           } 
-          
-          // Lógica de Estado ON/OFF
+          // Estado ON/OFF
           else if (stream.dataPath().equals("/ar/estado")) {
             bool novo_estado = stream.to<bool>();
             Serial.printf("[STREAM] Novo estado: %s\n", novo_estado ? "ON" : "OFF");
@@ -148,26 +147,30 @@ void processData(AsyncResult &aResult) {
                     sendCodeArOFF();
                 }
                 estado = novo_estado;
-                // O registro será enviado no próximo ciclo de telemetria ou aqui se preferir
             }
           }
       }
     }
-    // Callback do GET assíncrono de temperatura
     else if (aResult.uid() == "getTempTask") {
         RealtimeDatabaseResult &result = aResult.to<RealtimeDatabaseResult>();
         int t = result.to<int>();
         Serial.printf("[GET TASK] Temperatura confirmada: %d\n", t);
         
-        // Se for diferente da que usamos, corrige
-        if (t != temperatura_alvo && t >= 16 && t <= 31) {
+        if (t >= 16 && t <= 31) {
             temperatura_alvo = t;
             sendCodeAr(temperatura_alvo);
-            sendRegisterAr(true, temperatura_alvo);
+            estado = true;
+            Database.set<bool>(aClient, PATH_AR_ESTADO, true);
         }
     }
     else if (aResult.uid() != "streamControlTask") {
-      Firebase.printf("[PAYLOAD] Task: %s, Payload: %s\n", aResult.uid().c_str(), aResult.c_str());
+      // Também protege o log de payloads grandes de outras tarefas
+      String p = aResult.c_str();
+      if (p.length() < 500) {
+         Firebase.printf("[PAYLOAD] Task: %s, Payload: %s\n", aResult.uid().c_str(), p.c_str());
+      } else {
+         Firebase.printf("[PAYLOAD] Task: %s, Payload: [MUITO GRANDE: %d bytes]\n", aResult.uid().c_str(), p.length());
+      }
     }
   }
 }
@@ -227,6 +230,9 @@ void sendRegisterAr(bool novo_estado, int temperatura) {
   json.toString(jsonString);
 
   Database.push<object_t>(aClient, PATH_AR_REGISTROS, object_t(jsonString), processData, "pushRegistroTask");
+  
+  Database.set<int>(aClient, PATH_TEMPERATURA, temperatura);
+  Database.set<bool>(aClient, PATH_AR_ESTADO, estado);
 }
 
 void sendCodeAr(int temperatura){
@@ -237,7 +243,7 @@ void sendCodeAr(int temperatura){
   
   if (index >= 0 && index < 16) {
       const uint16_t* dados = arr_temperaturas_on[index];
-      size_t tamanho = arr_temperaturas_tamanhos[index] / sizeof(uint16_t); 
+      size_t tamanho = arr_temperaturas_tamanhos[index] / sizeof(uint16_t);
       IrSender.sendRaw(dados, tamanho, 38);
   } else {
       Serial.printf("[ERRO IR] Temperatura %d fora da faixa.\n", temperatura);
