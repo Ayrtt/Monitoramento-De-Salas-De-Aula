@@ -6,7 +6,7 @@
 
 void pir_manager_task(void *pvParameter);
 void IRAM_ATTR sensor_isr_handler();
-String getRuntimeFormatted(); // Função de tempo offline
+String getRuntimeFormatted();
 
 
 const int RELAY_PIN = 32;
@@ -15,8 +15,8 @@ const int RELAY_PIN = 32;
 const int PIR_PIN = 34;
 SemaphoreHandle_t pirSemaphore = NULL;
 
-// --- Função que simula um relógio baseado no tempo ligado (Offline) ---
-String getRuntimeFormatted() {
+
+String getRuntimeFormatted() {  //Função que simula um relógio baseado no tempo ligado (Offline)
   unsigned long t = millis();
   unsigned long segundos = t / 1000;
   unsigned long minutos = (segundos / 60) % 60;
@@ -57,10 +57,10 @@ void pir_manager_task(void *pvParameter) {
 }
 
 void IRAM_ATTR sensor_isr_handler() {
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xSemaphoreGiveFromISR(pirSemaphore, &xHigherPriorityTaskWoken);
-  if (xHigherPriorityTaskWoken) {
-    portYIELD_FROM_ISR();
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;                  //Variável de controle
+  xSemaphoreGiveFromISR(pirSemaphore, &xHigherPriorityTaskWoken); //Entrega o semáforo para análise de prioridade
+  if (xHigherPriorityTaskWoken) {                                 //Se true, a task do pir está pronta
+    portYIELD_FROM_ISR();                                         //Interrompe o que está fazendo e vai para a task do pir
   }
 }
 
@@ -74,8 +74,18 @@ void setup() {
   digitalWrite(RELAY_PIN, RELAY_OFF);
 
   pirSemaphore = xSemaphoreCreateBinary();
-  attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
-  xTaskCreate(&pir_manager_task, "pir_task", 4096, NULL, 5, NULL);
+  attachInterrupt(
+    digitalPinToInterrupt(PIR_PIN), //digitalPinToInterrupt traduz o número do pino para o número da interrupção
+    sensor_isr_handler,             //Função para executar quando ocorrer a interrupção(sem parâmetros e sem retorno)
+    RISING);                        //Gatilho dispara quando o sinal vai de baixo para alto (RISING).
+
+  xTaskCreate(
+    &pir_manager_task,  //função da task
+    "pir_task",         //nome
+    4096,               //tamanho 
+    NULL,               //ponteiro para os parâmetros
+    5,                  //prioridade
+    NULL);              //ponteiro para o handler da task
 }
 
 void loop() {
