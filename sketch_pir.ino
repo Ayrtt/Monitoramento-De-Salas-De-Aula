@@ -1,83 +1,81 @@
 #include <stdio.h>
-#include <string.h>
 #include <Arduino.h>
 
-const int PIR_PIN = 27; // Pino do sensor
-int pirState = 0; // Estado do sensor
+#define RELAY_ON LOW  
+#define RELAY_OFF HIGH 
 
-void state_machine_task(void *pvParameter) {
-  unsigned long lastDetectionTime = 0; // Marca o tempo da última detecção
-  bool isLedOn = false; // Estado do LED
+void pir_manager_task(void *pvParameter);
+void IRAM_ATTR sensor_isr_handler();
+String getRuntimeFormatted(); // Função de tempo offline
+
+
+const int RELAY_PIN = 32;
+
+
+const int PIR_PIN = 34;
+SemaphoreHandle_t pirSemaphore = NULL;
+
+// --- Função que simula um relógio baseado no tempo ligado (Offline) ---
+String getRuntimeFormatted() {
+  unsigned long t = millis();
+  unsigned long segundos = t / 1000;
+  unsigned long minutos = (segundos / 60) % 60;
+  unsigned long horas = (segundos / 3600);
+  segundos = segundos % 60;
+
+  char timeStringBuff[20];
+  // Formata como HH:MM:SS
+  sprintf(timeStringBuff, "%02lu:%02lu:%02lu", horas, minutos, segundos);
+  return String(timeStringBuff);
+}
+
+void pir_manager_task(void *pvParameter) {
+  unsigned long lastActivityTime = 0;
+  bool isPresenceActive = false;
 
   while (1) {
-    int pirReading = digitalRead(PIR_PIN);
+    if (xSemaphoreTake(pirSemaphore, 0) == pdTRUE) {
+      lastActivityTime = millis(); 
 
-    if (pirReading == HIGH) { 
-      // Movimento detectado
-      lastDetectionTime = millis(); // Atualiza o tempo da última detecção
-
-      if (!isLedOn) {
-        // Liga o LED e publica a mensagem apenas se ainda não estiver ligado
-        isLedOn = true;
-        pirState = 1;
-        Serial.println("Sensor ativado.");
+      if (!isPresenceActive) {
+        isPresenceActive = true;
+        Serial.print("[PIR] Movimento detectado! Ligando luz. -> ");       
+        Serial.println(getRuntimeFormatted());
+        digitalWrite(RELAY_PIN, RELAY_ON);
       }
     }
 
-    // Verifica se o tempo de retenção passou e o LED está ligado
-    if (isLedOn && (millis() - lastDetectionTime > 5000)) {
-      // Desliga o LED após o timeout
-      isLedOn = false;
-      pirState = 0;
-      Serial.println("Sensor desativado.");
+    if (isPresenceActive && (millis() - lastActivityTime > 10000)) {
+      isPresenceActive = false;
+      Serial.print("[PIR] Inatividade. Desligando luz.      -> ");
+      Serial.println(getRuntimeFormatted());
+      digitalWrite(RELAY_PIN, RELAY_OFF);
     }
 
-    delay(10); // Pequeno atraso para evitar consumo excessivo de CPU
+    vTaskDelay(pdMS_TO_TICKS(50)); 
   }
 }
 
-/*
-bool flag = 0; // Flag para controle do estado do sensor
-unsigned long start_time; // Variável para armazenar o instante de início do temporizador
-
-void state_machine_task(void *pvParameter) {
-  while(1){
-    int pir_pin_read = digitalRead(PIR_PIN);
-    if((pir_pin_read==LOW)&&(flag==0)){ // Se o sensor for desativado e a flag estiver abaixada
-      flag = 1; // Flag sobe para prevenir prints infinitos
-      pirState = 0; // Estado atualizado
-      Serial.println("Sensor desativado.");
-    }
-
-    if((pir_pin_read==HIGH)&&(flag==1)){ // Se o sensor for ativado e a flag estivar levantada
-      flag = 0; // Flag abaixa para prevenir prints infinitos
-      pirState = 1; // Estado atualizado
-      Serial.println("Sensor ativado.");
-
-      start_time = millis(); // Início do temporizador
-
-      while(millis() - start_time <5000){ // Enquanto a diferença entre o instante atual e o início do temporizador for menor que cinco segundos
-        Serial.println("While.");
-        if (digitalRead(PIR_PIN) == LOW){ // Se o sensor desativar antes do tempo acabar
-          Serial.println("While LOW.");
-          break;
-        }
-         delay(10);
-      }
-    }
+void IRAM_ATTR sensor_isr_handler() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xSemaphoreGiveFromISR(pirSemaphore, &xHigherPriorityTaskWoken);
+  if (xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR();
   }
-}*/
-
-void sensor_isr_handler() {
-  pirState = 1; // Interrupção para alterar o estado do sensor
 }
 
 void setup() {
-  Serial.begin(9600);
-  Serial.println("Setup.");
+  Serial.begin(115200);
+  Serial.println("Setup iniciado.");
+  
+  pinMode(RELAY_PIN, OUTPUT);
   pinMode(PIR_PIN, INPUT);
-  xTaskCreate(&state_machine_task, "state_machine_task", 2048, NULL, 5, NULL);
+
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+
+  pirSemaphore = xSemaphoreCreateBinary();
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
+  xTaskCreate(&pir_manager_task, "pir_task", 4096, NULL, 5, NULL);
 }
 
 void loop() {
