@@ -33,7 +33,7 @@
 #define DHT_PIN 14
 #define DHTTYPE DHT11
 
-#define RELAY_PIN 13
+#define RELAY_PIN 32
 #define PIR_PIN 34
 
 #define DHT_READ_DELAY 10000
