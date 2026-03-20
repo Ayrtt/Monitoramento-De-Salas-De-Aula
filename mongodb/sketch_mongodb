@@ -1,58 +1,118 @@
+#include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+
+#include <string.h>
+#include "time.h"
+
+#include <DHT.h>
+#include <DHT_U.h>
+#include <IRremote.hpp>
+
 #include "config.h"
+
+WiFiClient client;
+HTTPClient http;
+
+SemaphoreHandle_t pirSemaphore;
+
+void sendRegisterPIR(bool presenca);
+void pir_manager_task(void *pvParameter);
+void IRAM_ATTR sensor_isr_handler();
+
+void pir_manager_task(void *pvParameter) {
+  unsigned long lastActivityTime = 0;
+  bool isPresenceActive = false;
+
+  while (1) {
+    if (xSemaphoreTake(pirSemaphore, 0) == pdTRUE) {
+      lastActivityTime = millis(); 
+
+      if (!isPresenceActive) {
+        isPresenceActive = true;
+        Serial.println("[PIR] Movimento detectado! Ligando luz.");
+        digitalWrite(RELAY_PIN, RELAY_ON);
+        sendRegisterPIR(true);
+        //sendRegisterAr(ar_estado, temperatura_atual);
+      }
+    }
+
+    if (isPresenceActive && (millis() - lastActivityTime > INACTIVITY_TIMEOUT_MS)) {
+      isPresenceActive = false;
+      Serial.println("[PIR] Inatividade. Desligando luz.");
+      digitalWrite(RELAY_PIN, RELAY_OFF);
+      sendRegisterPIR(false);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50)); 
+  }
+}
+
+void IRAM_ATTR sensor_isr_handler() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xSemaphoreGiveFromISR(pirSemaphore, &xHigherPriorityTaskWoken);
+  if (xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR();
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.print("\nConectando ao Wi-Fi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\n Wi-Fi Conectado!");
 
-  testar_envio_presenca();
+  Serial.print("\nConectando ao Wi-Fi");
+  setup_wifi();
+
+  pinMode(RELAY_PIN, OUTPUT); 
+  pinMode(PIR_PIN, INPUT);
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+
+  pirSemaphore = xSemaphoreCreateBinary();
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
+  xTaskCreate(&pir_manager_task, "pir_manager_task", 12288, NULL, 5, NULL);
+
+  //sendRegisterPIR(1);
   testar_leitura_status();
 }
 
 void loop() {
 }
 
-void testar_envio_presenca() {
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n--- TESTANDO ENVIO DO PIR (POST) ---");
-    
-    HTTPClient http;
-    String url = String(serverName) + "/api/sensores/presenca";
-    http.begin(url);
-    
-    http.addHeader("Content-Type", "application/json");
-
-    StaticJsonDocument<200> doc;
-    doc["device_id"] = "0001";
-    doc["evento"] = "start";
-    doc["timestamp"] = 1;
-    
-    String jsonEnviado;
-    serializeJson(doc, jsonEnviado);
-
-    int httpResponseCode = http.POST(jsonEnviado);
-
-    if (httpResponseCode > 0) {
-      Serial.print("Status: ");
-      Serial.println(httpResponseCode);
-      String payload = http.getString();
-      Serial.print("Resposta: ");
-      Serial.println(payload);
-    } else {
-      Serial.print("[ERRO] no envio: ");
-      Serial.println(httpResponseCode);
-    }
-    http.end();
+void sendRegisterPIR(bool presenca) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi não conectado.");
+    return;
   }
+
+  Serial.println("\n--- TESTANDO ENVIO DO PIR (POST) ---");
+    
+  HTTPClient http;
+  String url = String(serverName) + "/api/sensores/presenca";
+  http.begin(url);
+    
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<200> doc;
+  doc["device_id"] = "0001";
+  doc["evento"] = presenca ? "on": "off";
+  doc["timestamp"] = 2;
+   
+  String jsonEnviado;
+  serializeJson(doc, jsonEnviado);
+
+  int httpResponseCode = http.POST(jsonEnviado);
+  if (httpResponseCode > 0) {
+    Serial.print("Status: ");
+    Serial.println(httpResponseCode);
+    String payload = http.getString();
+    Serial.print("Resposta: ");
+    Serial.println(payload);
+  } else {
+    Serial.print("[ERRO] no envio: ");
+    Serial.println(httpResponseCode);
+  }
+  http.end();
 }
 
 void testar_leitura_status() {
@@ -87,5 +147,12 @@ void testar_leitura_status() {
       Serial.println(httpResponseCode);
     }
     http.end();
+  }
+}
+
+void setup_wifi(){
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
   }
 }
