@@ -2,20 +2,30 @@
 #define CONFIG_H
 #include <Arduino.h>
 
-/*rede
+/*rede*/
 const char* WIFI_SSID = "Assert-Guest";
 const char* WIFI_PASSWORD= "Gu3st@ssert.";
-const char* serverName = "http://192.168.12.18:5000";*/
+const char* serverName = "http://192.168.12.18:5000";
 
-/*hotspot pc
-#define WIFI_SSID "DESKTOP-Q32KGC5 2858"
-#define WIFI_PASSWORD "14U8s^26"
-#define serverName "http://192.168.137.1:5000";*/ 
+// --- Configurações do Hardware (Pinos) ---
+#define LED_PIN 27
+#define DHT_PIN 14
+#define DHTTYPE DHT11
 
-/*hotspot celularhttp://10.205.183.130:5000 */
-const char* WIFI_SSID = "motorola one fusion_1902";
-const char* WIFI_PASSWORD = "testeapi";
-const String serverName = "http://kgjgo-200-129-71-140.a.free.pinggy.link";
+#define RELAY_PIN 32
+#define PIR_PIN 34
 
+#define RELAY_ON LOW  
+#define RELAY_OFF HIGH 
+
+// --- Configurações dos delays ---
+#define DHT_READ_DELAY 20000
+#define INACTIVITY_TIMEOUT_MS 5000
+//#define AC_INACTIVITY_TIMEOUT_MS 180000
+
+// --- Configurações do Servidor de Tempo (NTP) ---
+#define NTP_SERVER "pool.ntp.org"
+#define GMT_OFFSET_SEC -10800      // Offset para GMT-3 (Brasil)
+#define DAYLIGHT_OFFSET_SEC 0
 
 #endif
