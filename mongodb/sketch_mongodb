@@ -1,0 +1,91 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "config.h"
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.print("\nConectando ao Wi-Fi");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n Wi-Fi Conectado!");
+
+  testar_envio_presenca();
+  testar_leitura_status();
+}
+
+void loop() {
+}
+
+void testar_envio_presenca() {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n--- TESTANDO ENVIO DO PIR (POST) ---");
+    
+    HTTPClient http;
+    String url = String(serverName) + "/api/sensores/presenca";
+    http.begin(url);
+    
+    http.addHeader("Content-Type", "application/json");
+
+    StaticJsonDocument<200> doc;
+    doc["device_id"] = "0001";
+    doc["evento"] = "start";
+    doc["timestamp"] = 1;
+    
+    String jsonEnviado;
+    serializeJson(doc, jsonEnviado);
+
+    int httpResponseCode = http.POST(jsonEnviado);
+
+    if (httpResponseCode > 0) {
+      Serial.print("Status: ");
+      Serial.println(httpResponseCode);
+      String payload = http.getString();
+      Serial.print("Resposta: ");
+      Serial.println(payload);
+    } else {
+      Serial.print("[ERRO] no envio: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
+
+void testar_leitura_status() {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n--- TESTANDO LEITURA DO RELÉ (GET) ---");
+    
+    HTTPClient http;
+    String url = String(serverName) + "/api/dispositivos/0001/status";
+    http.begin(url);
+
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0) {
+      Serial.print("Status: ");
+      Serial.println(httpResponseCode);
+      
+      String payload = http.getString();
+      
+      StaticJsonDocument<256> doc;
+      DeserializationError error = deserializeJson(doc, payload);
+      
+      if (!error) {
+        bool rele = doc["status_rele"];
+        Serial.print("O ESP32 deve deixar o relé: ");
+        Serial.println(rele ? "LIGADO" : "DESLIGADO");
+      } else {
+        Serial.print("Erro ao ler JSON: ");
+        Serial.println(error.c_str());
+      }
+    } else {
+      Serial.print("[ERRO] na leitura: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
