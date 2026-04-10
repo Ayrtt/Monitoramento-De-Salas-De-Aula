@@ -67,7 +67,7 @@ def update_status(device_id):
             upsert=True
         )
         
-        print(f"💡 Status updated for device {device_id}")
+        print(f"Status updated for device {device_id}")
         return jsonify({"message": "Status updated successfully!"}), 200
 
     except Exception as e:
