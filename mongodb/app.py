@@ -1,114 +1,117 @@
 import os
-from flask import Flask, jsonify, request # Adicionamos o 'request' aqui!
+from flask import Flask, jsonify, request
 from pymongo import MongoClient
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv('.env')
 
 app = Flask(__name__)
-string_conexao = os.getenv("MONGO_DB_CONN_STRING")
+connection_string = os.environ.get("MONGO_DB_CONN_STRING")
 
 try:
-    cliente = MongoClient(string_conexao)
-    cliente.admin.command('ping')
-    print("--Conectado ao MongoDB Local com sucesso!")
+    client = MongoClient(connection_string)
+    client.admin.command('ping')
+    print("-- Successfully connected to MongoDB!")
 except Exception as e:
-    print(f"--Erro ao conectar no Mongo: {e}")
+    print(f"-- Error connecting to Mongo: {e}")
 
-db = cliente["tcc_iot"]
-colecao_presenca = db["logs_presenca"]
-colecao_temperatura = db["logs_temperatura"]
-colecao_status = db["status_dispositivos"]
+db = client["MonitoramentoSalaDeAula"]
 
-# Rota de teste antiga (GET)
+presence_collection = db["presence_logs"]
+temperature_collection = db["temperature_logs"]
+status_collection = db["device_status"]
+
+# ==========================================
+# ROUTE: Test connection (GET)
+# ==========================================
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({"mensagem": "API do TCC rodando perfeitamente no ambiente local!"}), 200
+    return jsonify({"message": "TCC API running perfectly in the local environment!"}), 200
 
 # ==========================================
-# ROTA: Receber dados do Sensor PIR (POST)
+# ROUTE: Receive PIR Sensor data (POST)
 # ==========================================
-@app.route('/api/sensores/presenca', methods=['POST'])
-def registrar_presenca():
+@app.route('/api/sensors/presence', methods=['POST'])
+def register_presence():
     try:
-        dados = request.json
+        data = request.json
         
-        if not dados or 'device_id' not in dados or 'evento' not in dados:
-            return jsonify({"erro": "JSON inválido ou faltando campos"}), 400
+        if not data or 'device_id' not in data or 'event' not in data:
+            return jsonify({"error": "Invalid JSON or missing fields"}), 400
             
-        resultado = colecao_presenca.insert_one(dados)
+        result = presence_collection.insert_one(data)
         
-        print(f"Novo evento recebido: {dados['evento']} | ID: {resultado.inserted_id}")
+        print(f"New event received: {data['event']} | ID: {result.inserted_id}")
         
         return jsonify({
-            "mensagem": "Log de presença salvo!",
-            "id_mongo": str(resultado.inserted_id)
+            "message": "Presence log saved!",
+            "mongo_id": str(result.inserted_id)
         }), 201
 
     except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
     
 # ==========================================
-# NOVA ROTA: Receber dados do Sensor DHT11 (POST)
+# ROUTE FOR DASHBOARD: Update Relay (PATCH)
 # ==========================================
-@app.route('/api/sensores/clima', methods=['POST'])
-def registrar_clima():
+@app.route('/api/devices/<device_id>/status', methods=['PATCH'])
+def update_status(device_id):
     try:
-        dados = request.json
+        data = request.json
         
-        # Validação: Garante que os dados vitais chegaram
-        if not dados or 'device_id' not in dados or 'temperatura' not in dados or 'umidade' not in dados:
-            return jsonify({"erro": "Faltando device_id, temperatura ou umidade"}), 400
-            
-        # Salva o documento na coleção
-        resultado = colecao_temperatura.insert_one(dados)
-        
-        print(f"🌡️ Novo clima recebido: {dados['temperatura']}°C | ID: {resultado.inserted_id}")
-        
-        return jsonify({
-            "mensagem": "Log de clima salvo!",
-            "id_mongo": str(resultado.inserted_id)
-        }), 201
-
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
-    
-# ==========================================
-# ROTA PARA O DASHBOARD: Atualizar o Relé (PUT)
-# ==========================================
-@app.route('/api/dispositivos/<device_id>/status', methods=['PUT'])
-def atualizar_status(device_id):
-    try:
-        dados = request.json
-        
-        # $set: atualizar apenas os campos enviados 
-        # upsert=True: "Se o dispositivo 0001 não existir, crie ele agora"
-        resultado = colecao_status.update_one(
+        # $set: update only the sent fields
+        # upsert=True: "If device 0001 doesn't exist, create it now"
+        result = status_collection.update_one(
             {"device_id": device_id}, 
-            {"$set": dados}, 
+            {"$set": data}, 
             upsert=True
         )
         
-        print(f"💡 Status atualizado para o dispositivo {device_id}")
-        return jsonify({"mensagem": "Status atualizado com sucesso!"}), 200
+        print(f"💡 Status updated for device {device_id}")
+        return jsonify({"message": "Status updated successfully!"}), 200
 
     except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        return jsonify({"error": str(e)}), 500    
+    
+# ==========================================
+# ROUTE: Receive DHT11 Sensor data (POST)
+# ==========================================
+@app.route('/api/sensors/temperature', methods=['POST'])
+def register_temperature():
+    try:
+        data = request.json
+        
+        # Validation: Ensures vital data arrived
+        if not data or 'device_id' not in data or 'temperature' not in data:
+            return jsonify({"error": "Missing device_id, temperature"}), 400
+            
+        # Saves the document in the collection
+        result = temperature_collection.insert_one(data)
+        
+        print(f"New temperature data received: {data['temperature']}°C | ID: {result.inserted_id}")
+        
+        return jsonify({
+            "message": "Temperature log saved!",
+            "mongo_id": str(result.inserted_id)
+        }), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ==========================================
-# ROTA PARA O ESP32: Ler o Relé (GET)
+# ROUTE FOR ESP32: Read Relay (GET)
 # ==========================================
-@app.route('/api/dispositivos/<device_id>/status', methods=['GET'])
-def ler_status(device_id):
+@app.route('/api/devices/<device_id>/status', methods=['GET'])
+def read_status(device_id):
     try:
-        # Busca no banco o documento exato do ESP32 solicitado
-        status = colecao_status.find_one({"device_id": device_id})
+        # Searches the DB for the exact document of the requested ESP32
+        status = status_collection.find_one({"device_id": device_id})
         
         if status:
-            status['_id'] = str(status['_id']) # Converte o ID para texto
+            status['_id'] = str(status['_id']) # Converts ID to string
             return jsonify(status), 200
         else:
-            return jsonify({"erro": "Dispositivo não encontrado"}), 404
+            return jsonify({"error": "Device not found"}), 404
 
     except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
