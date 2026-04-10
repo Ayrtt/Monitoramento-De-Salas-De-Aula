@@ -3,7 +3,6 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <Adafruit_Sensor.h>
 
 #include <string.h>
 #include "time.h"
@@ -13,6 +12,7 @@
 #include <IRremote.hpp>
 
 #include "config.h"
+#include "codigos_ar.h" 
 
 WiFiClient client;
 HTTPClient http;
