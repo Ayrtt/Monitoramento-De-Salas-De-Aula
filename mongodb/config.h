@@ -2,6 +2,11 @@
 #define CONFIG_H
 #include <Arduino.h>
 
+// Network
+const char* WIFI_SSID = "";
+const char* WIFI_PASSWORD= "";
+const char* serverName = "";
+
 // --- Configurações do Hardware (Pinos) ---
 #define LED_PIN 27
 #define DHT_PIN 14
