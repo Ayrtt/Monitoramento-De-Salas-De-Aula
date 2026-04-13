@@ -6,6 +6,9 @@
 const char* WIFI_SSID = "";
 const char* WIFI_PASSWORD= "";
 const char* serverName = "";
+const int serverPort =;
+
+const char* deviceID = "";
 
 // --- Configurações do Hardware (Pinos) ---
 #define LED_PIN 27
