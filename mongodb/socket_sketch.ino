@@ -14,7 +14,7 @@
 #include <IRremote.hpp>
 
 #include "config.h"
-#include "codigos_ar.h" 
+#include "ac_codes.h" 
 
 SocketIOclient socketIO;
 
@@ -32,17 +32,21 @@ int target_temperature = 0;
 int current_temperature = 0;
 
 String getCurrentTime();
+void setup_wifi();
 bool wifiConnection();
 void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
 
 void pir_manager_task(void *pvParameter);
 void IRAM_ATTR sensor_isr_handler();
 void sendRegisterPIR(bool presence);
-void updateRelay();
+void updateRelay(bool presence);
 
 int getTemperatureDHT();
-void sendRegisterAC(int temperature);
+void sendRegisterTemperature(int temperature);
 void updateTemperature(int temperature);
+void sendCodeAC(int temperature);
+void sendCodeACOff();
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size);
 
 void sendRegisterPIR(bool presence) {
   DynamicJsonDocument doc(1024);
@@ -86,7 +90,6 @@ void sendRegisterTemperature(int temperature) {
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
 
-  // Identifies which API route will receive this 'event'. Needs to be the first field of the json
   array.add("register_temperature");
 
   JsonObject param1 = array.createNestedObject();
@@ -134,8 +137,6 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
   xTaskCreate(&pir_manager_task, "pir_manager_task", 12288, NULL, 5, NULL);
 
-  sendRegisterPIR(1);
-  //db_get();
   dht.begin();
 
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
@@ -154,7 +155,6 @@ void loop() {
     if (last_temperature != current_temperature){      
       sendRegisterTemperature(current_temperature);
       updateTemperature(current_temperature);
-      //(AC status: %s), ac_status ? "ON" : "OFF"ac_status,
       last_temperature = current_temperature;
     }
     
@@ -166,46 +166,46 @@ void loop() {
 void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case sIOtype_DISCONNECT:
-      Serial.println("[WebSocket] Desconectado!");
+      Serial.println("[WebSocket] Disconnected!");
       break;
     case sIOtype_CONNECT:
-      Serial.printf("[WebSocket] Conectado! URL: %s\n", payload);
-      socketIO.send(sIOtype_CONNECT, "/"); // Confirma a entrada no canal padrão
+      Serial.printf("[WebSocket] Connected! URL: %s\n", payload);
+      socketIO.send(sIOtype_CONNECT, "/");
       break;
     case sIOtype_EVENT:
     {
-      // 1. Desempacota o texto recebido para um formato JSON inteligível
       DynamicJsonDocument doc(1024);
       DeserializationError error = deserializeJson(doc, payload);
 
       if (error) {
-        Serial.print("[WebSocket] Falha ao ler JSON: ");
+        Serial.print("[WebSocket] JSON Reading Error: ");
         Serial.println(error.c_str());
         return;
       }
 
-      // 2. Extrai o nome do evento (posição 0 do array)
       String eventName = doc[0].as<String>();
 
-      // 3. Verifica se é o evento de comando do ar condicionado
-      if (eventName == "command_target_temperature") {
-        JsonObject data = doc[1]; // Os dados estão na posição 1
-        String id_recebido = data["device_id"].as<String>();
+      if (eventName == "command_target_temperature"){
+        JsonObject data = doc[1];
+        String id_received = data["device_id"].as<String>();
 
-        // 4. Confirma se a ordem é realmente para este dispositivo (ESP32 atual)
-        if (id_recebido == deviceID) {
-          int nova_temperatura = data["target_temperature"].as<int>();
-          
-          // Salva na variável global que você já havia declarado no topo do código
-          target_temperature = nova_temperatura;
-          
-          Serial.println("=========================================");
-          Serial.printf(">>> ORDEM RECEBIDA: Setar AC para %d°C <<<\n", target_temperature);
-          Serial.println("=========================================");
+        if (id_received == deviceID) {
+          target_temperature = data["target_temperature"].as<int>();
+          sendCodeAC(target_temperature);
         }
-      } 
+      }
+      else if (eventName == "command_ac"){
+        JsonObject data = doc[1];
+        String id_received = data["device_id"].as<String>();
+
+        if (id_received == deviceID) {
+          sendCodeACOff(target_temperature);
+        }
+      }
+      else if (eventName == "command_relay"){
+
+      }
       else {
-        // Se for outro evento qualquer, apenas imprime por curiosidade
         Serial.printf("[WebSocket] Resposta do Servidor: %s\n", payload);
       }
       break;
@@ -281,4 +281,61 @@ int getTemperatureDHT() {
   dht.temperature().getEvent(&event);
   if (isnan(event.temperature)) return -999; 
   return (int)event.temperature;
+}
+
+void sendCodeAC(int temperature){
+  Serial.printf("[IR] Sending %d°C signal", temperature);
+
+  int index = temperature - 16;
+
+  if (index >= 0 && index < 16) {
+    const uint16_t* signal_data = array_ac_signals_on[index].rawData;
+    size_t signal_size = array_ac_signals_on[index].length;
+
+    if (signal_size > 0) {
+      sendConvertedRaw(signal_data, signal_size);
+      Serial.println("[IR] Code sent.");
+    } else {
+      Serial.println("[WARNING IR] Empty code!");
+    }
+  } else {
+    Serial.printf("[ERROR IR] Temperature %d outside of range.\n", temperature);
+  }
+}
+
+void sendCodeACOff() {
+  Serial.println("[IR] Turning AC off");
+
+  const uint16_t* signal_data = array_ac_signal_off.rawData;
+  size_t signal_size = array_ac_signal_off.length;
+
+  if (signal_size > 0) {
+    sendConvertedRaw(signal_data, signal_size);
+    Serial.println("[IR] OFF Code sent.");
+  } else {
+    Serial.println("[WARNING IR] Empty OFF code");
+  }
+}
+
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size) {
+  // Temporary buffer stores microseconds data (If too large, stack can burst)
+
+  uint16_t* data_micros = (uint16_t*)malloc(size * sizeof(uint16_t));
+  if (data_micros == NULL) {
+    Serial.println("[ERROR IR] Memory allocation error!");
+    return;
+  }
+
+  // Conversion: Value * 50 (standard conversion factor for small raw codes)
+  for (size_t i = 0; i < size; i++) {
+    data_micros[i] = data_ticks[i] * 50;
+  }
+
+  for(int i = 0; i<3; i++){
+    Serial.println("[IR] Sending signal...");
+    IrSender.sendRaw(data_micros, size, 38);
+    delay(1000);
+  }
+
+  free(data_micros);
 }
