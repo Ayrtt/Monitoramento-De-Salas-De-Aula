@@ -21,10 +21,13 @@ const char* deviceID = "";
 #define RELAY_ON LOW  
 #define RELAY_OFF HIGH 
 
+#if !defined(RAW_BUFFER_LENGTH) // IR remote buffer
+#define RAW_BUFFER_LENGTH 1024
+#endif
+
 // --- Configurações dos delays ---
 #define DHT_READ_DELAY 20000
 #define INACTIVITY_TIMEOUT_MS 5000
-//#define AC_INACTIVITY_TIMEOUT_MS 180000
 
 // --- Configurações do Servidor de Tempo (NTP) ---
 #define NTP_SERVER "pool.ntp.org"
