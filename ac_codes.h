@@ -27,7 +27,7 @@ const uint16_t ac_signal_31[] = {62,34, 11,21, 10,21, 10,8, 10,7, 11,7, 10,21, 1
 
 const uint16_t ac_signal_off[] = {62,34, 10,22, 9,22, 10,7, 10,8, 10,8, 10,21, 10,8, 10,7, 10,21, 10,22, 10,7, 10,21, 10,8, 10,8, 10,20, 11,21, 10,8, 10,20, 11,21, 10,8, 10,7, 11,21, 10,7, 10,8, 10,21, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,21, 10,8, 10,8, 9,22, 9,22, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,21, 10,8, 10,8, 9,22, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,8, 10,8, 10,7, 10,9, 9,8, 10,8, 9,9, 9,8, 10,8, 9,9, 9,8, 10,8, 9,9, 9,8, 10,8, 9,8, 9,9, 9,9, 9,8, 9,9, 9,9, 9,9, 8,9, 9,9, 9,9, 8,9, 9,9, 9,9, 8,10, 8,9, 9,9, 8,10, 8,9, 9,9, 8,10, 8,10, 7,10, 8,24, 7,10, 8,10, 7,11, 7,11, 7,10, 7,25, 7,10, 7};  // Protocol=PulseDistance, Raw-Data=0x410000000000, 112 bits, LSB first, Gap=3276750us, Duration=117000us
 
-const IRCode list_ac_signals_on[] = {
+const IRCode array_ac_signals_on[] = {
   { ac_signal_16, sizeof(ac_signal_16) / sizeof(uint16_t) },
   { ac_signal_17, sizeof(ac_signal_17) / sizeof(uint16_t) },
   { ac_signal_18, sizeof(ac_signal_18) / sizeof(uint16_t) },
@@ -46,6 +46,6 @@ const IRCode list_ac_signals_on[] = {
   { ac_signal_31, sizeof(ac_signal_31) / sizeof(uint16_t) }
 };
 
-const IRCode list_ac_signal_off = { ac_signal_off, sizeof(ac_signal_off) / sizeof(uint16_t) };
+const IRCode array_ac_signal_off = { ac_signal_off, sizeof(ac_signal_off) / sizeof(uint16_t) };
 
 #endif
