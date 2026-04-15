@@ -1,11 +1,17 @@
+from gevent import monkey
+monkey.patch_all()
+
 import os
-from flask import Flask, jsonify, request
+from flask import Flask
 from pymongo import MongoClient
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
+from flask_socketio import SocketIO, emit
 
 load_dotenv('.env')
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = ''
+socketio = SocketIO(app, cors_allowed_origins="*")
 connection_string = os.environ.get("MONGO_DB_CONN_STRING")
 
 try:
@@ -15,103 +21,126 @@ try:
 except Exception as e:
     print(f"-- Error connecting to Mongo: {e}")
 
-db = client["MonitoramentoSalaDeAula"]
+db = client["te"] #tcc_iot
 
 presence_collection = db["presence_logs"]
 temperature_collection = db["temperature_logs"]
 status_collection = db["device_status"]
 
-# ==========================================
-# ROUTE: Test connection (GET)
-# ==========================================
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({"message": "TCC API running perfectly in the local environment!"}), 200
-
-# ==========================================
-# ROUTE: Receive PIR Sensor data (POST)
-# ==========================================
-@app.route('/api/sensors/presence', methods=['POST'])
-def register_presence():
-    try:
-        data = request.json
-        
-        if not data or 'device_id' not in data or 'event' not in data:
-            return jsonify({"error": "Invalid JSON or missing fields"}), 400
+@socketio.on('register_presence')
+def handle_register_presence(data):
+  try:
+    if not data or 'device_id' not in data or 'event' not in data or 'timestamp' not in data:
+      # Emits an event back to the sender informing something went wrong
+      emit('error_presence', {"error": "Invalid JSON or missing fields"})
+      return
             
-        result = presence_collection.insert_one(data)
+    result = presence_collection.insert_one(data)
         
-        print(f"New event received: {data['event']} | ID: {result.inserted_id}")
+    print(f"[PIR_log] {data['event']} | ID: {result.inserted_id} | {data['timestamp']}")
         
-        return jsonify({
-            "message": "Presence log saved!",
-            "mongo_id": str(result.inserted_id)
-        }), 201
+    emit('presence_registered_successfully', {
+      "mongo_id": str(result.inserted_id)
+    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-# ==========================================
-# ROUTE FOR DASHBOARD: Update Relay (PATCH)
-# ==========================================
-@app.route('/api/devices/<device_id>/status', methods=['PATCH'])
-def update_status(device_id):
-    try:
-        data = request.json
-        
-        # $set: update only the sent fields
-        # upsert=True: "If device 0001 doesn't exist, create it now"
-        result = status_collection.update_one(
-            {"device_id": device_id}, 
-            {"$set": data}, 
-            upsert=True
-        )
-        
-        print(f"Status updated for device {device_id}")
-        return jsonify({"message": "Status updated successfully!"}), 200
+  except Exception as e:
+    emit('error_presence', {"error": str(e)})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500    
-    
-# ==========================================
-# ROUTE: Receive DHT11 Sensor data (POST)
-# ==========================================
-@app.route('/api/sensors/temperature', methods=['POST'])
-def register_temperature():
-    try:
-        data = request.json
-        
-        # Validation: Ensures vital data arrived
-        if not data or 'device_id' not in data or 'temperature' not in data:
-            return jsonify({"error": "Missing device_id, temperature"}), 400
+@socketio.on('register_temperature')
+def handle_register_temperature(data):
+  try:
+    if not data or 'device_id' not in data or 'temperature' not in data or 'timestamp' not in data:
+      emit('error_temperature', {"error": "Invalid JSON or missing fields"})
+      return
             
-        # Saves the document in the collection
-        result = temperature_collection.insert_one(data)
+    result = temperature_collection.insert_one(data)
         
-        print(f"New temperature data received: {data['temperature']}°C | ID: {result.inserted_id}")
+    print(f"[DHT_log] {data['temperature']} | ID: {result.inserted_id} | {data['timestamp']}")
         
-        return jsonify({
-            "message": "Temperature log saved!",
-            "mongo_id": str(result.inserted_id)
-        }), 201
+    emit('temperature_registered_successfully', {
+      "mongo_id": str(result.inserted_id)
+    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+  except Exception as e:
+    emit('error_temperature', {"error": str(e)})
 
-# ==========================================
-# ROUTE FOR ESP32: Read Relay (GET)
-# ==========================================
-@app.route('/api/devices/<device_id>/status', methods=['GET'])
-def read_status(device_id):
-    try:
-        # Searches the DB for the exact document of the requested ESP32
-        status = status_collection.find_one({"device_id": device_id})
-        
-        if status:
-            status['_id'] = str(status['_id']) # Converts ID to string
-            return jsonify(status), 200
-        else:
-            return jsonify({"error": "Device not found"}), 404
+@socketio.on('update_relay')
+def handle_update_relay(data):
+  try:
+    if not data or 'device_id' not in data or 'relay_status' not in data:
+      emit('error_relay_update', {"error": "Invalid JSON or missing fields"})
+      return
+  
+    query = {"device_id": data["device_id"]}
+    new_value = {"$set": {"relay_status": data['relay_status']}} 
+    
+    status_collection.update_one(query, new_value, upsert=True)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    print(f"[STATUS] Relay updated to: {data['relay_status']}")
+
+  except Exception as e:
+    emit('error_status_update', {"error": str(e)})
+
+@socketio.on('update_temperature')
+def handle_update_temperature(data):
+  try:
+    if not data or 'device_id' not in data or 'temperature' not in data:
+      emit('error_temperature_update', {"error": "Invalid JSON or missing fields"})
+      return
+  
+    query = {"device_id": data["device_id"]}
+    new_value = {"$set": {"temperature": data['temperature']}} 
+    
+    status_collection.update_one(query, new_value, upsert=True)
+
+    print(f"[STATUS] Temperature updated to: {data['temperature']}")
+
+  except Exception as e:
+    emit('error_temperature_update', {"error": str(e)})
+
+@socketio.on('set_target_temperature')
+def handle_set_target_temperature(data):
+  try:
+    if not data or 'device_id' not in data or 'target_temperature' not in data:
+      emit('error_command', {"error": "Invalid JSON or missing fields"})
+      return
+
+    query = {"device_id": data["device_id"]}
+    new_value = {"$set": {"target_temperature": data['target_temperature']}}
+    
+    status_collection.update_one(query, new_value, upsert=True)
+    
+    print(f"[COMANDO] Nova temperatura alvo para {data['device_id']}: {data['target_temperature']}°C")
+
+    emit('command_target_temperature', {
+      "device_id": data["device_id"],
+      "target_temperature": data['target_temperature']
+    }, broadcast=True)
+
+  except Exception as e:
+    emit('error_command', {"error": str(e)})
+
+@socketio.on('set_relay')
+def handle_set_relay(data):
+  try:
+    if not data or 'device_id' not in data or 'relay_status' not in data:
+      emit('error_command', {"error": "Invalid JSON or missing fields"})
+      return
+
+    query = {"device_id": data["device_id"]}
+    new_value = {"$set": {"relay_status": data['relay_status']}}
+    
+    status_collection.update_one(query, new_value, upsert=True)
+    
+    print(f"[COMANDO] Novo estado para {data['device_id']}: {data['relay_status']}")
+
+    emit('command_relay_status', {
+      "device_id": data["device_id"],
+      "relay_status": data['relay_status']
+    }, broadcast=True)
+
+  except Exception as e:
+    emit('error_command', {"error": str(e)})
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
