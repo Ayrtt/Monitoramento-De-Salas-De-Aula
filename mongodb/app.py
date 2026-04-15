@@ -19,7 +19,7 @@ try:
     client.admin.command('ping')
     print("-- Successfully connected to MongoDB!")
 except Exception as e:
-    print(f"-- Error connecting to Mongo: {e}")
+    print(f"-- Error connecting to MongoDB: {e}")
 
 db = client["te"] #tcc_iot
 
@@ -50,6 +50,7 @@ def handle_register_presence(data):
 def handle_register_temperature(data):
   try:
     if not data or 'device_id' not in data or 'temperature' not in data or 'timestamp' not in data:
+      # Emits an event back to the sender informing something went wrong
       emit('error_temperature', {"error": "Invalid JSON or missing fields"})
       return
             
@@ -110,7 +111,7 @@ def handle_set_target_temperature(data):
     
     status_collection.update_one(query, new_value, upsert=True)
     
-    print(f"[COMANDO] Nova temperatura alvo para {data['device_id']}: {data['target_temperature']}°C")
+    print(f"[COMMAND] Nova temperatura alvo para {data['device_id']}: {data['target_temperature']}°C")
 
     emit('command_target_temperature', {
       "device_id": data["device_id"],
@@ -132,7 +133,7 @@ def handle_set_relay(data):
     
     status_collection.update_one(query, new_value, upsert=True)
     
-    print(f"[COMANDO] Novo estado para {data['device_id']}: {data['relay_status']}")
+    print(f"[COMMAND] Novo estado para {data['device_id']}: {data['relay_status']}")
 
     emit('command_relay_status', {
       "device_id": data["device_id"],
