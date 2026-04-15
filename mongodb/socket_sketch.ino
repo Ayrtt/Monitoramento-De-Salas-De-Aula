@@ -14,7 +14,7 @@
 #include <IRremote.hpp>
 
 #include "config.h"
-#include "ac_codes.h" 
+#include "ac_raw_signals.h" 
 
 SocketIOclient socketIO;
 
@@ -48,7 +48,8 @@ void sendCodeAC(int temperature);
 void sendCodeACOff();
 void sendConvertedRaw(const uint16_t* data_ticks, size_t size);
 
-void sendRegisterPIR(bool presence) {
+
+void sendRegisterPIR(bool presence){
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
 
@@ -151,8 +152,8 @@ void loop() {
 
   if (millis() - last_capture > DHT_READ_DELAY) {
     current_temperature = getTemperatureDHT();
-    Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
-    if (last_temperature != current_temperature){      
+    if (last_temperature != current_temperature){
+      Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
       sendRegisterTemperature(current_temperature);
       updateTemperature(current_temperature);
       last_temperature = current_temperature;
@@ -178,35 +179,38 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
       DeserializationError error = deserializeJson(doc, payload);
 
       if (error) {
-        Serial.print("[WebSocket] JSON Reading Error: ");
+        Serial.print("[WebSocket] Error while reading json received: ");
         Serial.println(error.c_str());
         return;
       }
 
       String eventName = doc[0].as<String>();
+      JsonObject data = doc[1];
+      String id_received = data["device_id"].as<String>();
 
-      if (eventName == "command_target_temperature"){
-        JsonObject data = doc[1];
-        String id_received = data["device_id"].as<String>();
-
-        if (id_received == deviceID) {
+      if (id_received == deviceID) {
+        if (eventName == "command_target_temperature"){
           target_temperature = data["target_temperature"].as<int>();
-          sendCodeAC(target_temperature);
+          Serial.printf("[COMMAND] Setting temperature to: %d\n", target_temperature);
+          if (target_temperature == 0){
+            sendCodeACOff();
+          }
+          else{
+            sendCodeAC(target_temperature);
+          }
         }
-      }
-      else if (eventName == "command_ac"){
-        JsonObject data = doc[1];
-        String id_received = data["device_id"].as<String>();
-
-        if (id_received == deviceID) {
-          sendCodeACOff(target_temperature);
+        else if (eventName == "command_relay_status") {
+          bool new_relay_status = data["relay_status"].as<bool>();
+          Serial.printf("[COMMAND] Setting relay to: %s\n", new_relay_status ? "ON" : "OFF");
+          if (new_relay_status) {
+            digitalWrite(RELAY_PIN, RELAY_ON);
+          } else {
+            digitalWrite(RELAY_PIN, RELAY_OFF);
+          }
         }
-      }
-      else if (eventName == "command_relay"){
-
-      }
-      else {
-        Serial.printf("[WebSocket] Resposta do Servidor: %s\n", payload);
+        else {
+          Serial.printf("[WebSocket] Server response: %s\n", payload);
+        }
       }
       break;
     }
@@ -284,7 +288,7 @@ int getTemperatureDHT() {
 }
 
 void sendCodeAC(int temperature){
-  Serial.printf("[IR] Sending %d°C signal", temperature);
+  Serial.printf("[IR] Sending %d°C signal\n", temperature);
 
   int index = temperature - 16;
 
