@@ -1,4 +1,4 @@
-#define AC_RAW_SIGNALS_H
+#ifndef AC_RAW_SIGNALS_H
 #define AC_RAW_SIGNALS_H
 
 #include <Arduino.h>
