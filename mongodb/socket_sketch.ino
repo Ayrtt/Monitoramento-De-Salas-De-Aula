@@ -40,10 +40,13 @@ void pir_manager_task(void *pvParameter);
 void IRAM_ATTR sensor_isr_handler();
 void sendRegisterPIR(bool presence);
 void updateRelay(bool presence);
+void verificationRelay();
 
 int getTemperatureDHT();
 void sendRegisterTemperature(int temperature);
 void updateTemperature(int temperature);
+void verificationAC(int temperature);
+
 void sendCodeAC(int temperature);
 void sendCodeACOff();
 void sendConvertedRaw(const uint16_t* data_ticks, size_t size);
@@ -65,7 +68,7 @@ void sendRegisterPIR(bool presence){
   serializeJson(doc, output);
   socketIO.sendEVENT(output);
 
-  Serial.print("Enviado: ");
+  Serial.print("[PIR_log] - ");
   Serial.println(output);
 }
 
@@ -83,7 +86,26 @@ void updateRelay(bool presence) {
   serializeJson(doc, output);
   socketIO.sendEVENT(output);
 
-  Serial.print("Status Relay: ");
+  Serial.print("[STATUS] Relay: ");
+  Serial.println(output);
+}
+
+void verificationRelay() {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+  bool state = digitalRead(RELAY_PIN);
+
+  array.add("relay_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["relay_response"] = !state;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] Relay Command Response: ");
   Serial.println(output);
 }
 
@@ -121,6 +143,24 @@ void updateTemperature(int temperature) {
   socketIO.sendEVENT(output);
 
   Serial.print("Status Temperature: ");
+  Serial.println(output);
+}
+
+void verificationAC(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("ac_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["ac_response"] = temperature;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] AC Command Response: ");
   Serial.println(output);
 }
 
@@ -189,8 +229,8 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
       String id_received = data["device_id"].as<String>();
 
       if (id_received == deviceID) {
-        if (eventName == "command_target_temperature"){
-          target_temperature = data["target_temperature"].as<int>();
+        if (eventName == "ac_command"){
+          target_temperature = data["ac_command"].as<int>();
           Serial.printf("[COMMAND] Setting temperature to: %d\n", target_temperature);
           if (target_temperature == 0){
             sendCodeACOff();
@@ -199,14 +239,15 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
             sendCodeAC(target_temperature);
           }
         }
-        else if (eventName == "command_relay_status") {
-          bool new_relay_status = data["relay_status"].as<bool>();
+        else if (eventName == "relay_command") {
+          bool new_relay_status = data["relay_command"].as<bool>();
           Serial.printf("[COMMAND] Setting relay to: %s\n", new_relay_status ? "ON" : "OFF");
           if (new_relay_status) {
             digitalWrite(RELAY_PIN, RELAY_ON);
           } else {
             digitalWrite(RELAY_PIN, RELAY_OFF);
           }
+          verificationRelay();
         }
         else {
           Serial.printf("[WebSocket] Server response: %s\n", payload);
@@ -305,6 +346,8 @@ void sendCodeAC(int temperature){
   } else {
     Serial.printf("[ERROR IR] Temperature %d outside of range.\n", temperature);
   }
+
+  verificationAC(index+16);
 }
 
 void sendCodeACOff() {
@@ -319,6 +362,8 @@ void sendCodeACOff() {
   } else {
     Serial.println("[WARNING IR] Empty OFF code");
   }
+
+  verificationAC(0);
 }
 
 void sendConvertedRaw(const uint16_t* data_ticks, size_t size) {
