@@ -13,11 +13,11 @@ void verificationAC(int temperature) {
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
 
-  array.add("verification_ac");
+  array.add("ac_command_response");
 
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID;
-  param1["ac_command_response"] = temperature;
+  param1["ac_response"] = temperature;
 
   String output;
   serializeJson(doc, output);
@@ -31,11 +31,11 @@ void verificationRelay() {
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
 
-  array.add("verification_relay");
+  array.add("relay_command_response");
 
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID;
-  param1["relay_command_response"] = digitalRead(RELAY_PIN);
+  param1["relay_response"] = digitalRead(RELAY_PIN);
 
   String output;
   serializeJson(doc, output);
