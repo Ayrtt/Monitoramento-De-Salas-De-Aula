@@ -1,147 +1,414 @@
-from gevent import monkey
-monkey.patch_all()
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <WebSocketsClient.h>
+#include <SocketIOclient.h>
 
-import os
-from flask import Flask
-from pymongo import MongoClient
-from dotenv import load_dotenv
-from flask_socketio import SocketIO, emit
+#include <string.h>
+#include "time.h"
 
-load_dotenv('.env')
+#include <DHT.h>
+#include <DHT_U.h>
+#include <IRremote.hpp>
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = ''
-socketio = SocketIO(app, cors_allowed_origins="*")
-connection_string = os.environ.get("MONGO_DB_CONN_STRING")
+#include "config.h"
+#include "ac_raw_signals.h" 
 
-try:
-    client = MongoClient(connection_string)
-    client.admin.command('ping')
-    print("-- Successfully connected to MongoDB!")
-except Exception as e:
-    print(f"-- Error connecting to MongoDB: {e}")
+SocketIOclient socketIO;
 
-db = client["te"] #tcc_iot
+WiFiClient client;
+HTTPClient http;
 
-presence_collection = db["presence_logs"]
-temperature_collection = db["temperature_logs"]
-status_collection = db["device_status"]
+SemaphoreHandle_t pirSemaphore;
+DHT_Unified dht(DHT_PIN, DHTTYPE);
 
-@socketio.on('register_presence')
-def handle_register_presence(data):
-  try:
-    if not data or 'device_id' not in data or 'event' not in data or 'timestamp' not in data:
-      # Emits an event back to the sender informing something went wrong
-      emit('error_presence', {"error": "Invalid JSON or missing fields"})
-      return
-            
-    result = presence_collection.insert_one(data)
-        
-    print(f"[PIR_log] {data['event']} | ID: {result.inserted_id} | {data['timestamp']}")
-        
-    emit('presence_registered_successfully', {
-      "mongo_id": str(result.inserted_id)
-    })
+bool presence = false;
+bool ac_status = false;
+unsigned long last_capture = 0;
+int last_temperature = 0;
+int target_temperature = 0;
+int current_temperature = 0;
 
-  except Exception as e:
-    emit('error_presence', {"error": str(e)})
+String getCurrentTime();
+void setup_wifi();
+bool wifiConnection();
+void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
 
-@socketio.on('register_temperature')
-def handle_register_temperature(data):
-  try:
-    if not data or 'device_id' not in data or 'temperature' not in data or 'timestamp' not in data:
-      # Emits an event back to the sender informing something went wrong
-      emit('error_temperature', {"error": "Invalid JSON or missing fields"})
-      return
-            
-    result = temperature_collection.insert_one(data)
-        
-    print(f"[DHT_log] {data['temperature']} | ID: {result.inserted_id} | {data['timestamp']}")
-        
-    emit('temperature_registered_successfully', {
-      "mongo_id": str(result.inserted_id)
-    })
+void pir_manager_task(void *pvParameter);
+void IRAM_ATTR sensor_isr_handler();
+void sendRegisterPIR(bool presence);
+void updateRelay(bool presence);
+void verificationRelay();
 
-  except Exception as e:
-    emit('error_temperature', {"error": str(e)})
+int getTemperatureDHT();
+void sendRegisterTemperature(int temperature);
+void updateTemperature(int temperature);
+void updateACstatus(bool ac_status);
+void verificationAC(int temperature);
 
-@socketio.on('update_relay')
-def handle_update_relay(data):
-  try:
-    if not data or 'device_id' not in data or 'relay_status' not in data:
-      emit('error_relay_update', {"error": "Invalid JSON or missing fields"})
-      return
+void sendCodeAC(int temperature);
+void sendCodeACOff();
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size);
+
+
+void sendRegisterPIR(bool presence){
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  // Identifies which API route will receive this 'event'. Needs to be the first field of the json
+  array.add("register_presence");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID; //const char* deviceID = "0001";
+  param1["event"] = presence ? "on" : "off";
+  param1["timestamp"] = getCurrentTime();
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[PIR_log] - ");
+  Serial.println(output);
+}
+
+void updateRelay(bool presence) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_relay");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["relay_status"] = presence;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[STATUS] Relay: ");
+  Serial.println(output);
+}
+
+void verificationRelay() {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+  bool state = digitalRead(RELAY_PIN);
+
+  array.add("relay_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["relay_response"] = !state;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] Relay Command Response: ");
+  Serial.println(output);
+}
+
+void sendRegisterTemperature(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("register_temperature");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID; //const char* deviceID = "0001";
+  param1["temperature"] = temperature;
+  param1["timestamp"] = getCurrentTime();
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("Enviado: ");
+  Serial.println(output);
+}
+
+void updateTemperature(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_temperature");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["temperature"] = temperature;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("Status Temperature: ");
+  Serial.println(output);
+}
+
+void updateACstatus(bool ac_status) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_ac_status");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["ac_status"] = ac_status;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[STATUS] Relay: ");
+  Serial.println(output);
+}
+
+void verificationAC(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("ac_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["ac_response"] = temperature;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] AC Command Response: ");
+  Serial.println(output);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  Serial.println("\nConecting to Wi-Fi");
+  setup_wifi();
+
+  pinMode(RELAY_PIN, OUTPUT); 
+  pinMode(PIR_PIN, INPUT);
   
-    query = {"device_id": data["device_id"]}
-    new_value = {"$set": {"relay_status": data['relay_status']}} 
+
+  pirSemaphore = xSemaphoreCreateBinary();
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
+  xTaskCreate(&pir_manager_task, "pir_manager_task", 12288, NULL, 5, NULL);
+
+  dht.begin();
+
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+  Serial.println("\nTime synchronized via NTP!");
+
+  socketIO.begin(serverName, serverPort, "/socket.io/?EIO=4");
+  socketIO.onEvent(socketIOEvent);
+
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+  sendCodeACOff();
+}
+
+void loop() {
+  socketIO.loop(); // Required to keep the socket open. Never use delay() inside loop.
+
+  if (millis() - last_capture > DHT_READ_DELAY) {
+    current_temperature = getTemperatureDHT();
+    if (last_temperature != current_temperature){
+      Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
+      sendRegisterTemperature(current_temperature);
+      updateTemperature(current_temperature);
+      last_temperature = current_temperature;
+    }
     
-    status_collection.update_one(query, new_value, upsert=True)
+    last_capture = millis();
+  }
+}
 
-    print(f"[STATUS] Relay updated to: {data['relay_status']}")
+// Required function to keep the library Socket.IO working internally
+void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case sIOtype_DISCONNECT:
+      Serial.println("[WebSocket] Disconnected!");
+      break;
+    case sIOtype_CONNECT:
+      Serial.printf("[WebSocket] Connected! URL: %s\n", payload);
+      socketIO.send(sIOtype_CONNECT, "/");
+      break;
+    case sIOtype_EVENT:
+    {
+      DynamicJsonDocument doc(1024);
+      DeserializationError error = deserializeJson(doc, payload);
 
-  except Exception as e:
-    emit('error_status_update', {"error": str(e)})
+      if (error) {
+        Serial.print("[WebSocket] Error while reading json received: ");
+        Serial.println(error.c_str());
+        return;
+      }
 
-@socketio.on('update_temperature')
-def handle_update_temperature(data):
-  try:
-    if not data or 'device_id' not in data or 'temperature' not in data:
-      emit('error_temperature_update', {"error": "Invalid JSON or missing fields"})
-      return
-  
-    query = {"device_id": data["device_id"]}
-    new_value = {"$set": {"temperature": data['temperature']}} 
-    
-    status_collection.update_one(query, new_value, upsert=True)
+      String eventName = doc[0].as<String>();
+      JsonObject data = doc[1];
+      String id_received = data["device_id"].as<String>();
 
-    print(f"[STATUS] Temperature updated to: {data['temperature']}")
+      if (id_received == deviceID) {
+        if (eventName == "ac_command"){
+          target_temperature = data["ac_command"].as<int>();
+          Serial.printf("[COMMAND] Setting temperature to: %d\n", target_temperature);
+          if (target_temperature == 0){
+            sendCodeACOff();
+          }
+          else{
+            sendCodeAC(target_temperature);
+          }
+        }
+        else if (eventName == "relay_command") {
+          bool new_relay_status = data["relay_command"].as<bool>();
+          Serial.printf("[COMMAND] Setting relay to: %s\n", new_relay_status ? "ON" : "OFF");
+          if (new_relay_status) {
+            digitalWrite(RELAY_PIN, RELAY_ON);
+          } else {
+            digitalWrite(RELAY_PIN, RELAY_OFF);
+          }
+          verificationRelay();
+        }
+        else {
+          Serial.printf("[WebSocket] Server response: %s\n", payload);
+        }
+      }
+      break;
+    }
+  }
+}
 
-  except Exception as e:
-    emit('error_temperature_update', {"error": str(e)})
+void setup_wifi(){
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+  }
+}
 
-@socketio.on('set_target_temperature')
-def handle_set_target_temperature(data):
-  try:
-    if not data or 'device_id' not in data or 'target_temperature' not in data:
-      emit('error_command', {"error": "Invalid JSON or missing fields"})
-      return
+bool wifiConnection(){
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not conected.");
+    return false;
+  }
+  else {return true;}
+}
 
-    query = {"device_id": data["device_id"]}
-    new_value = {"$set": {"target_temperature": data['target_temperature']}}
-    
-    status_collection.update_one(query, new_value, upsert=True)
-    
-    print(f"[COMMAND] Nova temperatura alvo para {data['device_id']}: {data['target_temperature']}°C")
+void pir_manager_task(void *pvParameter) {
+  unsigned long lastActivityTime = 0;
+  bool isPresenceActive = false;
 
-    emit('command_target_temperature', {
-      "device_id": data["device_id"],
-      "target_temperature": data['target_temperature']
-    }, broadcast=True)
+  while (1) {
+    if (xSemaphoreTake(pirSemaphore, 0) == pdTRUE) {
+      lastActivityTime = millis(); 
 
-  except Exception as e:
-    emit('error_command', {"error": str(e)})
+      if (!isPresenceActive) {
+        isPresenceActive = true;
+        Serial.println("[PIR Manager] Moviment detected! Turning light on.");
+        digitalWrite(RELAY_PIN, RELAY_ON);
+        sendRegisterPIR(isPresenceActive);
+        updateRelay(isPresenceActive);
+      }
+    }
 
-@socketio.on('set_relay')
-def handle_set_relay(data):
-  try:
-    if not data or 'device_id' not in data or 'relay_status' not in data:
-      emit('error_command', {"error": "Invalid JSON or missing fields"})
-      return
+    if (isPresenceActive && (millis() - lastActivityTime > INACTIVITY_TIMEOUT_MS)) {
+      isPresenceActive = false;
+      Serial.println("[PIR Manager] Inactivity. Turning light off.");
+      digitalWrite(RELAY_PIN, RELAY_OFF);
+      sendRegisterPIR(isPresenceActive);
+      updateRelay(isPresenceActive);
+    }
 
-    query = {"device_id": data["device_id"]}
-    new_value = {"$set": {"relay_status": data['relay_status']}}
-    
-    status_collection.update_one(query, new_value, upsert=True)
-    
-    print(f"[COMMAND] Novo estado para {data['device_id']}: {data['relay_status']}")
+    vTaskDelay(pdMS_TO_TICKS(50)); 
+  }
+}
 
-    emit('command_relay_status', {
-      "device_id": data["device_id"],
-      "relay_status": data['relay_status']
-    }, broadcast=True)
+void IRAM_ATTR sensor_isr_handler() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xSemaphoreGiveFromISR(pirSemaphore, &xHigherPriorityTaskWoken);
+  if (xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR();
+  }
+}
 
-  except Exception as e:
-    emit('error_command', {"error": str(e)})
+String getCurrentTime() {
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Error obtaining time");
+    return "Time Unavailable";
+  }
+  char timeStringBuff[50];
+  strftime(timeStringBuff, sizeof(timeStringBuff), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(timeStringBuff);
+}
 
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+int getTemperatureDHT() {
+  sensors_event_t event;
+  dht.temperature().getEvent(&event);
+  if (isnan(event.temperature)) return -999; 
+  return (int)event.temperature;
+}
+
+void sendCodeAC(int temperature){
+  Serial.printf("[IR] Sending %d°C signal\n", temperature);
+
+  int index = temperature - 16;
+
+  if (index >= 0 && index < 16) {
+    const uint16_t* signal_data = array_ac_signals_on[index].rawData;
+    size_t signal_size = array_ac_signals_on[index].length;
+
+    if (signal_size > 0) {
+      sendConvertedRaw(signal_data, signal_size);
+      Serial.println("[IR] Code sent.");
+    } else {
+      Serial.println("[WARNING IR] Empty code!");
+    }
+  } else {
+    Serial.printf("[ERROR IR] Temperature %d outside of range.\n", temperature);
+  }
+
+  updateACstatus(true);
+  verificationAC(index+16);
+}
+
+void sendCodeACOff() {
+  Serial.println("[IR] Turning AC off");
+
+  const uint16_t* signal_data = array_ac_signal_off.rawData;
+  size_t signal_size = array_ac_signal_off.length;
+
+  if (signal_size > 0) {
+    sendConvertedRaw(signal_data, signal_size);
+    Serial.println("[IR] OFF Code sent.");
+  } else {
+    Serial.println("[WARNING IR] Empty OFF code");
+  }
+
+  updateACstatus(false);
+  verificationAC(0);
+}
+
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size) {
+  // Temporary buffer stores microseconds data (If too large, stack can burst)
+
+  uint16_t* data_micros = (uint16_t*)malloc(size * sizeof(uint16_t));
+  if (data_micros == NULL) {
+    Serial.println("[ERROR IR] Memory allocation error!");
+    return;
+  }
+
+  // Conversion: Value * 50 (standard conversion factor for small raw codes)
+  for (size_t i = 0; i < size; i++) {
+    data_micros[i] = data_ticks[i] * 50;
+  }
+
+  for(int i = 0; i<3; i++){
+    Serial.println("[IR] Sending signal...");
+    IrSender.sendRaw(data_micros, size, 38);
+    delay(1000);
+  }
+
+  free(data_micros);
+}
