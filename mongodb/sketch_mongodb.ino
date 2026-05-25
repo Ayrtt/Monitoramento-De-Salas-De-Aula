@@ -3,6 +3,8 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <WebSocketsClient.h>
+#include <SocketIOclient.h>
 
 #include <string.h>
 #include "time.h"
@@ -12,7 +14,9 @@
 #include <IRremote.hpp>
 
 #include "config.h"
-#include "codigos_ar.h" 
+#include "ac_raw_signals.h" 
+
+SocketIOclient socketIO;
 
 WiFiClient client;
 HTTPClient http;
@@ -20,24 +24,276 @@ HTTPClient http;
 SemaphoreHandle_t pirSemaphore;
 DHT_Unified dht(DHT_PIN, DHTTYPE);
 
-//bool ac_status = false; 
-bool temp_flag = false;
+bool presence = false;
+bool ac_status = false;
 unsigned long last_capture = 0;
 int last_temperature = 0;
 int target_temperature = 0;
 int current_temperature = 0;
 
 String getCurrentTime();
+void setup_wifi();
 bool wifiConnection();
+void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
 
 void pir_manager_task(void *pvParameter);
 void IRAM_ATTR sensor_isr_handler();
 void sendRegisterPIR(bool presence);
-void update_relay();
+void updateRelay(bool presence);
+void verificationRelay();
 
 int getTemperatureDHT();
-void sendRegisterAC(int temperature);
-void update_Temperature(int temperature);
+void sendRegisterTemperature(int temperature);
+void updateTemperature(int temperature);
+void updateACstatus(bool ac_status);
+void verificationAC(int temperature);
+
+void sendCodeAC(int temperature);
+void sendCodeACOff();
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size);
+
+
+void sendRegisterPIR(bool presence){
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  // Identifies which API route will receive this 'event'. Needs to be the first field of the json
+  array.add("register_presence");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID; //const char* deviceID = "0001";
+  param1["event"] = presence ? "on" : "off";
+  param1["timestamp"] = getCurrentTime();
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[PIR_log] - ");
+  Serial.println(output);
+}
+
+void updateRelay(bool presence) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_relay");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["relay_status"] = presence;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[STATUS] Relay: ");
+  Serial.println(output);
+}
+
+void verificationRelay() {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+  bool state = digitalRead(RELAY_PIN);
+
+  array.add("relay_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["relay_response"] = !state;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] Relay Command Response: ");
+  Serial.println(output);
+}
+
+void sendRegisterTemperature(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("register_temperature");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID; //const char* deviceID = "0001";
+  param1["temperature"] = temperature;
+  param1["timestamp"] = getCurrentTime();
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("Enviado: ");
+  Serial.println(output);
+}
+
+void updateTemperature(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_temperature");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["temperature"] = temperature;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("Status Temperature: ");
+  Serial.println(output);
+}
+
+void updateACstatus(bool ac_status) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("update_ac_status");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["ac_status"] = ac_status;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[STATUS] Relay: ");
+  Serial.println(output);
+}
+
+void verificationAC(int temperature) {
+  DynamicJsonDocument doc(1024);
+  JsonArray array = doc.to<JsonArray>();
+
+  array.add("ac_command_response");
+
+  JsonObject param1 = array.createNestedObject();
+  param1["device_id"] = deviceID;
+  param1["ac_response"] = temperature;
+
+  String output;
+  serializeJson(doc, output);
+  socketIO.sendEVENT(output);
+
+  Serial.print("[VERIF] AC Command Response: ");
+  Serial.println(output);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  Serial.println("\nConecting to Wi-Fi");
+  setup_wifi();
+
+  pinMode(RELAY_PIN, OUTPUT); 
+  pinMode(PIR_PIN, INPUT);
+  
+
+  pirSemaphore = xSemaphoreCreateBinary();
+  attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
+  xTaskCreate(&pir_manager_task, "pir_manager_task", 12288, NULL, 5, NULL);
+
+  dht.begin();
+
+  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+  Serial.println("\nTime synchronized via NTP!");
+
+  socketIO.begin(serverName, serverPort, "/socket.io/?EIO=4");
+  socketIO.onEvent(socketIOEvent);
+
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+  sendCodeACOff();
+}
+
+void loop() {
+  socketIO.loop(); // Required to keep the socket open. Never use delay() inside loop.
+
+  if (millis() - last_capture > DHT_READ_DELAY) {
+    current_temperature = getTemperatureDHT();
+    if (last_temperature != current_temperature){
+      Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
+      sendRegisterTemperature(current_temperature);
+      updateTemperature(current_temperature);
+      last_temperature = current_temperature;
+    }
+    
+    last_capture = millis();
+  }
+}
+
+// Required function to keep the library Socket.IO working internally
+void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case sIOtype_DISCONNECT:
+      Serial.println("[WebSocket] Disconnected!");
+      break;
+    case sIOtype_CONNECT:
+      Serial.printf("[WebSocket] Connected! URL: %s\n", payload);
+      socketIO.send(sIOtype_CONNECT, "/");
+      break;
+    case sIOtype_EVENT:
+    {
+      DynamicJsonDocument doc(1024);
+      DeserializationError error = deserializeJson(doc, payload);
+
+      if (error) {
+        Serial.print("[WebSocket] Error while reading json received: ");
+        Serial.println(error.c_str());
+        return;
+      }
+
+      String eventName = doc[0].as<String>();
+      JsonObject data = doc[1];
+      String id_received = data["device_id"].as<String>();
+
+      if (id_received == deviceID) {
+        if (eventName == "ac_command"){
+          target_temperature = data["ac_command"].as<int>();
+          Serial.printf("[COMMAND] Setting temperature to: %d\n", target_temperature);
+          if (target_temperature == 0){
+            sendCodeACOff();
+          }
+          else{
+            sendCodeAC(target_temperature);
+          }
+        }
+        else if (eventName == "relay_command") {
+          bool new_relay_status = data["relay_command"].as<bool>();
+          Serial.printf("[COMMAND] Setting relay to: %s\n", new_relay_status ? "ON" : "OFF");
+          if (new_relay_status) {
+            digitalWrite(RELAY_PIN, RELAY_ON);
+          } else {
+            digitalWrite(RELAY_PIN, RELAY_OFF);
+          }
+          verificationRelay();
+        }
+        else {
+          Serial.printf("[WebSocket] Server response: %s\n", payload);
+        }
+      }
+      break;
+    }
+  }
+}
+
+void setup_wifi(){
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+  }
+}
+
+bool wifiConnection(){
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not conected.");
+    return false;
+  }
+  else {return true;}
+}
 
 void pir_manager_task(void *pvParameter) {
   unsigned long lastActivityTime = 0;
@@ -51,7 +307,8 @@ void pir_manager_task(void *pvParameter) {
         isPresenceActive = true;
         Serial.println("[PIR Manager] Moviment detected! Turning light on.");
         digitalWrite(RELAY_PIN, RELAY_ON);
-        sendRegisterPIR(true);
+        sendRegisterPIR(isPresenceActive);
+        updateRelay(isPresenceActive);
       }
     }
 
@@ -59,7 +316,8 @@ void pir_manager_task(void *pvParameter) {
       isPresenceActive = false;
       Serial.println("[PIR Manager] Inactivity. Turning light off.");
       digitalWrite(RELAY_PIN, RELAY_OFF);
-      sendRegisterPIR(false);
+      sendRegisterPIR(isPresenceActive);
+      updateRelay(isPresenceActive);
     }
 
     vTaskDelay(pdMS_TO_TICKS(50)); 
@@ -72,101 +330,6 @@ void IRAM_ATTR sensor_isr_handler() {
   if (xHigherPriorityTaskWoken) {
     portYIELD_FROM_ISR();
   }
-}
-
-void setup() {
-  Serial.begin(115200);
-
-  Serial.print("\nConecting to Wi-Fi");
-  setup_wifi();
-
-  pinMode(RELAY_PIN, OUTPUT); 
-  pinMode(PIR_PIN, INPUT);
-  digitalWrite(RELAY_PIN, RELAY_OFF);
-
-  pirSemaphore = xSemaphoreCreateBinary();
-  attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
-  xTaskCreate(&pir_manager_task, "pir_manager_task", 12288, NULL, 5, NULL);
-
-  sendRegisterPIR(1);
-  //db_get();
-  dht.begin();
-
-  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
-  Serial.println("\nTime synchronized via NTP!");
-}
-
-void loop() {
-  if (millis() - last_capture > DHT_READ_DELAY) {
-    current_temperature = getTemperatureDHT();
-    if (last_temperature != current_temperature){
-      Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
-      sendRegisterAC(current_temperature);
-      update_Temperature(current_temperature);
-      //(AC status: %s), ac_status ? "ON" : "OFF"ac_status,
-      last_temperature = current_temperature;
-    }
-    
-    last_capture = millis();
-  }
-}
-
-void sendRegisterPIR(bool presence) {
-  if (!wifiConnection()){return;}
-    
-  HTTPClient http;
-  String url = String(serverName) + "/api/sensors/presence";
-  http.begin(url);
-    
-  http.addHeader("Content-Type", "application/json");
-
-  StaticJsonDocument<200> doc;
-  doc["device_id"] = "0001";
-  doc["event"] = presence ? "on": "off";
-  doc["timestamp"] = getCurrentTime();
-
-  update_Relay();
-   
-  String jsonSent;
-  serializeJson(doc, jsonSent);
-
-  int httpResponseCode = http.POST(jsonSent);
-  if (httpResponseCode > 0) {
-    Serial.print("[PIR] Post: ");
-    Serial.println(httpResponseCode);
-    String payload = http.getString();
-  } else {
-    Serial.print("[PIR] Post Error: ");
-    Serial.println(httpResponseCode);
-  }
-  http.end();
-}
-
-void update_Relay() {
-  if (!wifiConnection()){return;}
-    
-  HTTPClient http;
-  String url = String(serverName) + "/api/devices/0001/status";
-  http.begin(url);
-    
-  http.addHeader("Content-Type", "application/json");
-
-  StaticJsonDocument<200> doc;
-  doc["relay_status"] = digitalRead(RELAY_PIN) ? false: true;
-   
-  String jsonSent;
-  serializeJson(doc, jsonSent);
-
-  int httpResponseCode = http.sendRequest("PATCH", jsonSent);
-  if (httpResponseCode > 0) {
-    Serial.print("[RELAY] Patch: ");
-    Serial.println(httpResponseCode);
-    String payload = http.getString();
-  } else {
-    Serial.print("[RELAY] Patch Error:");
-    Serial.println(httpResponseCode);
-  }
-  http.end();
 }
 
 String getCurrentTime() {
@@ -183,112 +346,69 @@ String getCurrentTime() {
 int getTemperatureDHT() {
   sensors_event_t event;
   dht.temperature().getEvent(&event);
-  if (isnan(event.temperature)) return 0; 
+  if (isnan(event.temperature)) return -999; 
   return (int)event.temperature;
 }
 
-void sendRegisterAC(int temperature) {
-  if (!wifiConnection()){return;}
-    
-  HTTPClient http;
-  String url = String(serverName) + "/api/sensors/temperature";
-  http.begin(url);
-    
-  http.addHeader("Content-Type", "application/json");
+void sendCodeAC(int temperature){
+  Serial.printf("[IR] Sending %d°C signal\n", temperature);
 
-  StaticJsonDocument<200> doc;
-  doc["device_id"] = "0001";
-  doc["timestamp"] = getCurrentTime();
-  doc["temperature"] = temperature;
-   
-  String jsonSent;
-  serializeJson(doc, jsonSent);
+  int index = temperature - 16;
 
-  int httpResponseCode = http.POST(jsonSent);
-  if (httpResponseCode > 0) {
-    Serial.print("[DHT] Post: ");
-    Serial.println(httpResponseCode);
-    String payload = http.getString();
-  } else {
-    Serial.print("[DHT] Post Error");
-    Serial.println(httpResponseCode);
-  }
-  http.end();
-}
+  if (index >= 0 && index < 16) {
+    const uint16_t* signal_data = array_ac_signals_on[index].rawData;
+    size_t signal_size = array_ac_signals_on[index].length;
 
-void update_Temperature(int temperature) {
-  if (!wifiConnection()){return;}
-    
-  HTTPClient http;
-  String url = String(serverName) + "/api/devices/0001/status";
-  http.begin(url);
-    
-  http.addHeader("Content-Type", "application/json");
-
-  StaticJsonDocument<200> doc;
-  doc["temperature"] = temperature;
-   
-  String jsonSent;
-  serializeJson(doc, jsonSent);
-
-  int httpResponseCode = http.sendRequest("PATCH", jsonSent);
-  if (httpResponseCode > 0) {
-    Serial.print("[DHT] Patch: ");
-    Serial.println(httpResponseCode);
-    String payload = http.getString();
-  } else {
-    Serial.print("[DHT] Patch Error: ");
-    Serial.println(httpResponseCode);
-  }
-  http.end();
-}
-
-
-/*
-void db_get() {
-  if (!wifiConnection()){return;}
-    
-  HTTPClient http;
-  String url = String(serverName) + "/api/devices/0001/status";
-  http.begin(url);
-
-  int httpResponseCode = http.GET();
-
-  if (httpResponseCode > 0) {
-    Serial.print("Status: ");
-    Serial.println(httpResponseCode);
-      
-    String payload = http.getString();
-    
-    StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, payload);
-     
-    if (!error) {
-      bool relay = doc["relay_status"];
-      Serial.print("[RELAY] Get: ");
-      Serial.println(relay ? "ON" : "OFF");
+    if (signal_size > 0) {
+      sendConvertedRaw(signal_data, signal_size);
+      Serial.println("[IR] Code sent.");
     } else {
-      Serial.print("[RELAY] GET JSON reading: ");
-      Serial.println(error.c_str());
+      Serial.println("[WARNING IR] Empty code!");
     }
   } else {
-    Serial.print("[RELAY] Error HTTPResponse: ");
-    Serial.println(httpResponseCode);
+    Serial.printf("[ERROR IR] Temperature %d outside of range.\n", temperature);
   }
-  http.end();
-}
-*/
-void setup_wifi(){
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-  }
+
+  updateACstatus(true);
+  verificationAC(index+16);
 }
 
-bool wifiConnection(){
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not conected.");
-    return false;
+void sendCodeACOff() {
+  Serial.println("[IR] Turning AC off");
+
+  const uint16_t* signal_data = array_ac_signal_off.rawData;
+  size_t signal_size = array_ac_signal_off.length;
+
+  if (signal_size > 0) {
+    sendConvertedRaw(signal_data, signal_size);
+    Serial.println("[IR] OFF Code sent.");
+  } else {
+    Serial.println("[WARNING IR] Empty OFF code");
   }
-  else {return true;}
+
+  updateACstatus(false);
+  verificationAC(0);
+}
+
+void sendConvertedRaw(const uint16_t* data_ticks, size_t size) {
+  // Temporary buffer stores microseconds data (If too large, stack can burst)
+
+  uint16_t* data_micros = (uint16_t*)malloc(size * sizeof(uint16_t));
+  if (data_micros == NULL) {
+    Serial.println("[ERROR IR] Memory allocation error!");
+    return;
+  }
+
+  // Conversion: Value * 50 (standard conversion factor for small raw codes)
+  for (size_t i = 0; i < size; i++) {
+    data_micros[i] = data_ticks[i] * 50;
+  }
+
+  for(int i = 0; i<3; i++){
+    Serial.println("[IR] Sending signal...");
+    IrSender.sendRaw(data_micros, size, 38);
+    delay(1000);
+  }
+
+  free(data_micros);
 }
