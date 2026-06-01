@@ -21,7 +21,7 @@ app.use(express.json());
 app.use(cors());
 
 // --- CONEXÃO COM MONGODB ATLAS ---
-const ATLAS_URI = "mongodb+srv://gabriel_db_user:LKGSHxBeyw58K36g@monitoramentodispositiv.gdoyn3l.mongodb.net/?appName=MonitoramentoDispositivos"; 
+const ATLAS_URI = ; 
 
 //process.env.MONGODB_URI;
 mongoose.connect(ATLAS_URI)
