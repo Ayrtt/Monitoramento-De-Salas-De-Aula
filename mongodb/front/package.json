@@ -1,0 +1,30 @@
+{
+  "name": "monitoramento-de-salas",
+  "version": "1.0.0",
+  "description": "- O projeto consiste em um site que monitora a climatização e a iluminação de salas de aula que são controlados por um esp conectado a um sensor que verifica presença de pessoas na sala.",
+  "main": "dispositivo.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GabrielL13/Monitoramento-de-Salas.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/GabrielL13/Monitoramento-de-Salas/issues"
+  },
+  "homepage": "https://github.com/GabrielL13/Monitoramento-de-Salas#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongodb": "^7.2.0",
+    "mongoose": "^9.2.1",
+    "socket.io": "^4.8.3"
+  }
+}
