@@ -1,3 +1,4 @@
+const dotenv = require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -21,16 +22,15 @@ app.use(express.json());
 app.use(cors());
 
 // --- CONEXÃO COM MONGODB ATLAS ---
-const ATLAS_URI = ; 
+const ATLAS_URI = process.env.ATLAS_URI;
 
 //process.env.MONGODB_URI;
 mongoose.connect(ATLAS_URI)
-    .then(() => console.log("✅ Servidor conectado ao MongoDB Atlas"))
-    .catch(err => console.error("❌ Erro de conexão:", err));
+    .then(() => console.log("Servidor conectado ao MongoDB Atlas"))
+    .catch(err => console.error("Erro de conexão:", err));
 
 // --- MODELOS ---
 
-// Mantido exatamente como o seu original, conforme solicitado
 const User = mongoose.model('User', new mongoose.Schema({
     matricula: { type: String, required: true, unique: true },
     email: String,
@@ -43,7 +43,7 @@ const DeviceStatus = mongoose.model('DeviceStatus', new mongoose.Schema({
     device_id: { type: String, required: true, unique: true },
     name: String,
     relay_status: Boolean,
-    ac_status: Boolean,
+    ac_status: Boolean, // <-- NOVO
     temperature: Number,
     ac_command: Number,
     ac_command_response: Number,
@@ -137,7 +137,6 @@ app.post('/dispositivos', async (req, res) => {
         await novo.save();
         res.status(201).json(novo);
     } catch (err) {
-        // Mudança aqui: Retornamos o err.message verdadeiro para o front-end
         console.error("ERRO NO MONGO:", err); 
         res.status(500).json({ message: `Erro do Banco: ${err.message}` });
     }
@@ -165,8 +164,16 @@ app.patch('/dispositivos/:id/ar', async (req, res) => {
         const atualizado = await DeviceStatus.findOneAndUpdate(
             { device_id: req.params.id },
             { $set: { ac_command: comando } },
-            { new: true }
+            //{ new: true }
+            { returnDocument: 'after' } // <-- NOVO CORRIGIDO AQUI
         );
+
+        // NOVO: Dispara o evento via WebSocket diretamente para o ESP32!
+        io.emit('ac_command', { 
+            device_id: req.params.id, 
+            ac_command: comando 
+        });
+
         res.json(atualizado);
     } catch (err) {
         res.status(500).json({ message: "Erro ao atualizar comando de Ar." });
@@ -175,12 +182,19 @@ app.patch('/dispositivos/:id/ar', async (req, res) => {
 
 app.patch('/dispositivos/:id/luz', async (req, res) => {
     try {
-        const { estado } = req.body; 
+        const { estado } = req.body;
         const atualizado = await DeviceStatus.findOneAndUpdate(
             { device_id: req.params.id },
             { $set: { relay_command: estado } },
-            { new: true }
+            { returnDocument: 'after' } // <-- NOVO CORRIGIDO AQUI
         );
+
+        // NOVO: Dispara o evento via WebSocket diretamente para o ESP32!
+        io.emit('relay_command', { 
+            device_id: req.params.id, 
+            relay_command: estado 
+        });
+
         res.json(atualizado);
     } catch (err) {
         res.status(500).json({ message: "Erro ao atualizar Luz." });
@@ -193,8 +207,15 @@ app.patch('/dispositivos/:id/temperatura', async (req, res) => {
         const atualizado = await DeviceStatus.findOneAndUpdate(
             { device_id: req.params.id },
             { $set: { ac_command: temperatura } }, 
-            { new: true }
+            { returnDocument: 'after' } // <-- NOVO CORRIGIDO AQUI
         );
+
+        // NOVO: Mesma lógica de aviso para a mudança de temperatura do AC
+        io.emit('ac_command', { 
+            device_id: req.params.id, 
+            ac_command: temperatura 
+        });
+
         res.json({ message: "Comando de temperatura atualizado", data: atualizado });
     } catch (err) {
         res.status(500).json({ message: "Erro ao atualizar temperatura." });
@@ -228,16 +249,148 @@ app.get('/dispositivos/:id/logs/luz', async (req, res) => {
     }
 });
 
-// APAGUE ISTO:
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => console.log(`🚀 API rodando na porta ${PORT}`));
+// <-- NOVO
+// =========================================================
+// --- WEBSOCKETS: COMUNICAÇÃO EM TEMPO REAL COM O ESP32 ---
+// =========================================================
 
-// E SUBSTITUA POR ISTO:
+io.on('connection', (socket) => {
+    console.log(`[WebSocket] Placa/Cliente conectado! ID: ${socket.id}`);
+
+    // 1. Escutando o sensor PIR (Presença) e o Relé
+    socket.on('register_presence', async (payload) => {
+        console.log(`[PIR] Presença detectada:`, payload);
+        try {
+            // Usa o molde do Mongoose para criar o documento
+            const novoLog = new PresenceLog({
+                device_id: payload.device_id,
+                event: payload.event,
+                timestamp: payload.timestamp
+            });
+            await novoLog.save(); // Salva no Atlas!
+            console.log("Log de presença salvo no banco!");
+            
+            // Megafone: avisa o Front-end para atualizar a interface
+            io.emit('atualizacao_presenca', payload); 
+        } catch (erro) {
+            console.error("Erro ao salvar log do PIR:", erro);
+        }
+    });
+
+    // 2. Escutando o sensor DHT11 (Temperatura)
+    socket.on('register_temperature', async (payload) => {
+        console.log(`[DHT11] Nova temperatura:`, payload);
+        try {
+            // Usa o molde do Mongoose para o Ar Condicionado
+            const novoLog = new TemperatureLog({
+                device_id: payload.device_id,
+                temperature: payload.temperature,
+                timestamp: payload.timestamp
+            });
+            await novoLog.save(); // Salva no Atlas!
+            console.log("Temperatura salva no banco!");
+            
+            // Megafone: avisa o Front-end para atualizar o gráfico
+            io.emit('atualizacao_temperatura', payload);
+        } catch (erro) {
+            console.error("Erro ao salvar log de Temperatura:", erro);
+        }
+    });
+
+    // 3. Status Voláteis (Não salvam no histórico, apenas atualizam a tela)
+    socket.on('update_relay', async (payload) => {
+        try {
+            // Atualiza a "verdade física" do relé no banco de dados
+            await DeviceStatus.findOneAndUpdate(
+                { device_id: payload.device_id },
+                { $set: { relay_status: payload.relay_status } }
+            );
+        } catch (err) {
+            console.error("Erro ao atualizar status do relé no banco:", err);
+        }
+        
+        // Repassa para a tela do navegador
+        io.emit('status_rele_alterado', payload);
+    });
+
+    socket.on('update_ac_status', async (payload) => {
+        try {
+            // Atualiza o status do ar-condicionado no banco de dados
+            await DeviceStatus.findOneAndUpdate(
+                { device_id: payload.device_id },
+                { $set: { ac_status: payload.ac_status } }
+            );
+        } catch (err) {
+            console.error("Erro ao atualizar o estado do ar-condicionado no banco:", err);
+        }
+        
+        // Repassa para a tela do navegador
+        io.emit('estado_ar_alterado', payload);
+    });
+
+    socket.on('update_temperature', async (payload) => {
+        try {
+            // Atualiza a temperatura no banco de dados
+            await DeviceStatus.findOneAndUpdate(
+                { device_id: payload.device_id },
+                { $set: { temperature: payload.temperature } }
+            );
+        } catch (err) {
+            console.error("Erro ao atualizar a temperatura no banco:", err);
+        }
+        
+        // Repassa para a tela do navegador
+        io.emit('temperatura_alterada', payload);
+    });
+
+    // --- ESCUTANDO OS EVENTOS DE VERIFICAÇÃO/CONFIRMAÇÃO DO HARDWARE ---
+
+    socket.on('relay_command_response', async (payload) => {
+        console.log(`[VERIFICAÇÃO] Resposta do comando do Relé:`, payload);
+        try {
+            // Atualiza o estado de confirmação no documento da sala
+            await DeviceStatus.findOneAndUpdate(
+                { device_id: payload.device_id },
+                { $set: { relay_command_response: payload.relay_command_response } }
+            );
+            console.log(`Confirmação do Relé salva em device_status: ${payload.relay_command_response}`);
+            
+            // Opcional: Avisa o front-end em tempo real que o hardware confirmou a ação
+            io.emit('status_rele_confirmado', payload);
+        } catch (err) {
+            console.error("Erro ao salvar verificação do relé no banco:", err);
+        }
+    });
+
+    socket.on('ac_command_response', async (payload) => {
+        console.log(`[VERIFICAÇÃO] Resposta do comando do AC:`, payload);
+        try {
+            // Atualiza o estado de confirmação da temperatura no documento da sala
+            await DeviceStatus.findOneAndUpdate(
+                { device_id: payload.device_id },
+                { $set: { ac_command_response: payload.ac_command_response } }
+            );
+            console.log(`Confirmação do AC salva em device_status: ${payload.ac_command_response}°C`);
+            
+            // Opcional: Avisa o front-end em tempo real que o hardware confirmou a ação
+            io.emit('status_ac_confirmado', payload);
+        } catch (err) {
+            console.error("Erro ao salvar verificação do ar condicionado no banco:", err);
+        }
+    });
+
+
+    socket.on('disconnect', () => {
+        console.log(`[WebSocket] Cliente desconectado. ID: ${socket.id}`);
+    });
+});
+
+
 const PORT = process.env.PORT || 5000; // Mantendo a 5000 para não ter que mexer no ESP32 agora
 
 // Exportando o 'io' para podermos usar nas rotas depois, se necessário
 app.set('io', io); 
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Servidor Híbrido (Express + Socket.IO) rodando na porta ${PORT}`);
+    console.log(`Servidor Híbrido (Express + Socket.IO) rodando na porta ${PORT}`);
 });
