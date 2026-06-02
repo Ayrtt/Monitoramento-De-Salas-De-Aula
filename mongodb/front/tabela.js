@@ -3,7 +3,7 @@ const adminButtons = document.getElementById("adminButtons");
 const thDeletar = document.getElementById("th-deletar");
 const logoutBtn = document.getElementById("logout-btn");
 
-const API_URL = "";
+const API_URL = "http://192.168.12.18:5000";
 
 const tipoUsuario = localStorage.getItem("tipoUsuario");
 
@@ -51,7 +51,9 @@ function renderizarTabela(dispositivos) {
             <td>${disp.name || "Sala " + disp.device_id}</td>
             <td style="color: ${corLuz}; font-weight: bold;">${luzLigada ? "Ligada" : "Desligada"}</td>
             <td style="color: ${corAr}; font-weight: bold;">${acLigado ? "Ligado" : "Desligado"}</td>
-            <td>${acLigado ? disp.ac_command_response + "°C" : "--"}</td>
+            
+            <td>${disp.temperature !== undefined ? disp.temperature + "°C" : "--"}</td>
+            
             ${tipoUsuario === "1" ? `<td><button class="deletar-btn" data-id="${disp.device_id}">🗑️</button></td>` : ""}
         `;
 

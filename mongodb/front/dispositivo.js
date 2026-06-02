@@ -2,8 +2,6 @@ const form = document.getElementById("form-dispositivo");
 const mensagem = document.getElementById("mensagem");
 
 const API_URL = "http://192.168.12.18:5000";
-//"https://monitoramento-de-salas.onrender.com"
-//
 
 form.addEventListener("submit", async (e) => {
     e.preventDefault();

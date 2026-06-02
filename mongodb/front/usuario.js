@@ -1,6 +1,6 @@
 const form = document.getElementById("form-usuario");
 const mensagem = document.getElementById("mensagem");
-const API_URL = "";
+const API_URL = "http://192.168.12.18:5000";
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
