@@ -1,6 +1,23 @@
 const id = localStorage.getItem("dispositivoIdParaRegistro");
 const API_URL = "http://192.168.12.18:5000";
 
+// NOVO
+// Conecta o front-end ao WebSocket do Node.js
+const socket = io(API_URL);
+
+// Referências do nosso novo popup
+const popupFeedback = document.getElementById("popupFeedback");
+const feedbackTitulo = document.getElementById("feedbackTitulo");
+const feedbackMensagem = document.getElementById("feedbackMensagem");
+const feedbackBotoes = document.getElementById("feedbackBotoes");
+let timeoutHardware;
+
+document.getElementById("closeFeedback").onclick = () => {
+    popupFeedback.style.display = "none";
+};
+
+//FIM NOVO
+
 const popupPower = document.getElementById("popupPower");
 const popupTemp = document.getElementById("popupTemperatura");
 const inputTemp = document.getElementById("inputTemperatura");
@@ -84,6 +101,31 @@ function baixarCSV(tipo) {
     document.body.removeChild(link);
 }
 
+//NOVO
+// Função que gerencia a tela de espera
+function iniciarEsperaHardware() {
+    feedbackTitulo.textContent = "Processando...";
+    feedbackMensagem.textContent = "Aguardando confirmação...";
+    feedbackBotoes.style.display = "none"; // Esconde o botão de fechar
+    popupFeedback.style.display = "flex";
+
+    // Se a placa não responder em 10 segundos, dá timeout
+    timeoutHardware = setTimeout(() => {
+        feedbackTitulo.textContent = "Erro de Comunicação";
+        feedbackMensagem.textContent = "O dispositivo demorou a responder. Verifique se está conectado corretamente.";
+        feedbackBotoes.style.display = "flex"; // Mostra o botão para fechar
+    }, 5000);
+}
+
+function finalizarComSucesso(mensagem) {
+    clearTimeout(timeoutHardware); // Cancela o cronômetro de erro
+    feedbackTitulo.textContent = "Sucesso!";
+    feedbackMensagem.textContent = mensagem;
+    feedbackBotoes.style.display = "flex";
+    carregarDados(); // Atualiza a tabela com o novo status
+}
+//FIM NOVO
+
 // Configura os botões de download
 document.getElementById("downloadArBtn")?.addEventListener("click", () => baixarCSV('ar'));
 document.getElementById("downloadLuzBtn")?.addEventListener("click", () => baixarCSV('luz'));
@@ -111,6 +153,9 @@ document.getElementById("confirmPower").onclick = async () => {
             endpoint = 'luz';
             payload = { estado: novoEstado };
         }
+        // NOVO
+        popupPower.style.display = "none"; // ESCONDE O POPUP ANTIGO E MOSTRA O DE ESPERA
+        iniciarEsperaHardware();
 
         await fetch(`${API_URL}/dispositivos/${id}/${endpoint}`, {
             method: 'PATCH',
@@ -135,6 +180,10 @@ document.getElementById("confirmTemperatura").onclick = async () => {
     }
 
     try {
+        // NOVO
+        popupTemp.style.display = "none";
+        iniciarEsperaHardware();
+
         await fetch(`${API_URL}/dispositivos/${id}/temperatura`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -150,6 +199,28 @@ document.getElementById("confirmTemperatura").onclick = async () => {
 
 document.getElementById("cancelPower").onclick = () => popupPower.style.display = "none";
 document.getElementById("cancelTemperatura").onclick = () => popupTemp.style.display = "none";
+
+// NOVO
+// --- ESCUTANDO A RESPOSTA DA ESP32 ---
+socket.on('status_ac_confirmado', (payload) => {
+    // Verifica se a resposta é para a sala que estamos olhando
+    if(payload.device_id === id) {
+        const statusTexto = payload.ac_command_response
+        if(statusTexto == 0){
+            finalizarComSucesso(`Ar-condicionado desligado.`);
+        }else{
+            finalizarComSucesso(`Temperatura alterada para: ${statusTexto} ºC.`);
+        }
+        
+    }
+});
+
+socket.on('status_rele_confirmado', (payload) => {
+    if(payload.device_id === id) {
+        const statusTexto = payload.relay_command_response ? 'Ligada' : 'Desligada';
+        finalizarComSucesso(`Luz ${statusTexto}.`);
+    }
+});
 
 // --- INICIALIZAÇÃO ---
 carregarDados();
