@@ -100,7 +100,7 @@ void verificationRelay() {
 
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID;
-  param1["relay_response"] = !state;
+  param1["relay_command_response"] = !state;
 
   String output;
   serializeJson(doc, output);
@@ -161,7 +161,7 @@ void updateACstatus(bool ac_status) {
   serializeJson(doc, output);
   socketIO.sendEVENT(output);
 
-  Serial.print("[STATUS] Relay: ");
+  Serial.print("[STATUS] AC: ");
   Serial.println(output);
 }
 
@@ -173,7 +173,7 @@ void verificationAC(int temperature) {
 
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID;
-  param1["ac_response"] = temperature;
+  param1["ac_command_response"] = temperature;
 
   String output;
   serializeJson(doc, output);
@@ -192,6 +192,7 @@ void setup() {
   pinMode(RELAY_PIN, OUTPUT); 
   pinMode(PIR_PIN, INPUT);
   
+  IrSender.begin(IR_SENDER_PIN, false);
 
   pirSemaphore = xSemaphoreCreateBinary();
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), sensor_isr_handler, RISING);
@@ -270,6 +271,7 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
             digitalWrite(RELAY_PIN, RELAY_OFF);
           }
           verificationRelay();
+          updateRelay(new_relay_status);
         }
         else {
           Serial.printf("[WebSocket] Server response: %s\n", payload);

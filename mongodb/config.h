@@ -8,10 +8,10 @@ const char* WIFI_PASSWORD= "";
 const char* serverName = "";
 const int serverPort =;
 
-const char* deviceID = "";
+const char* deviceID = "0001";
 
 // --- Configurações do Hardware (Pinos) ---
-#define LED_PIN 27
+#define IR_SENDER_PIN 27
 #define DHT_PIN 14
 #define DHTTYPE DHT11
 
