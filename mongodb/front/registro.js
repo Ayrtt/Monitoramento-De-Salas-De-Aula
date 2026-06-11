@@ -37,14 +37,22 @@ async function carregarDados() {
         
         const tabelaAr = document.getElementById("registros-ar");
         if (tabelaAr) {
+            // Adicionamos o .slice(0, 15) aqui para limitar a 15 registros
             tabelaAr.innerHTML = logsArAtuais.length > 0 
-                ? logsArAtuais.map((r, i) => `
+                ? logsArAtuais.slice(0, 15).map((r, i) => {
+                    const valorAr = r.temperature || r.ac_command || 0;
+                    const arLigado = valorAr > 0;
+
+                    return `
                     <tr>
                         <td>${i + 1}</td>
                         <td>${r.timestamp || r.dataHora || "--"}</td>
-                        <td style="color:#00ff00">Comando</td>
-                        <td>${r.temperature || r.ac_command || "0"}°C</td>
-                    </tr>`).join('')
+                        <td style="color:${arLigado ? '#00ff00' : '#ff4444'}; font-weight: bold;">
+                            ${arLigado ? "Ligado" : "Desligado"}
+                        </td>
+                        <td>${valorAr}°C</td>
+                    </tr>`;
+                }).join('')
                 : `<tr><td colspan="4">Sem registros de ar.</td></tr>`;
         }
 
@@ -54,7 +62,7 @@ async function carregarDados() {
         const tabelaLuz = document.getElementById("registros-luz");
         if (tabelaLuz) {
             tabelaLuz.innerHTML = logsLuzAtuais.length > 0
-                ? logsLuzAtuais.map((r, i) => `
+                ? logsLuzAtuais.slice(0,15).map((r, i) => `
                     <tr>
                         <td>${i + 1}</td>
                         <td>${r.timestamp || r.dataHora || "--"}</td>
