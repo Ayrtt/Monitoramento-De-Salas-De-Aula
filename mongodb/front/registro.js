@@ -41,7 +41,9 @@ async function carregarDados() {
             tabelaAr.innerHTML = logsArAtuais.length > 0 
                 ? logsArAtuais.slice(0, 15).map((r, i) => {
                     const valorAr = r.temperature || r.ac_command || 0;
-                    const arLigado = valorAr > 0;
+                    
+                    // Apenas UMA declaração da variável resolvendo as duas situações:
+                    const arLigado = r.ac_status !== undefined ? r.ac_status : (valorAr > 0);
 
                     return `
                     <tr>

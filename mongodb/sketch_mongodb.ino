@@ -43,7 +43,7 @@ void updateRelay(bool presence);
 void verificationRelay();
 
 int getTemperatureDHT();
-void sendRegisterTemperature(int temperature);
+void sendRegisterTemperature(int temperature, bool ac_status);
 void updateTemperature(int temperature);
 void updateACstatus(bool ac_status);
 void verificationAC(int temperature);
@@ -110,7 +110,7 @@ void verificationRelay() {
   Serial.println(output);
 }
 
-void sendRegisterTemperature(int temperature) {
+void sendRegisterTemperature(int temperature, bool ac_status) {
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
 
@@ -119,6 +119,7 @@ void sendRegisterTemperature(int temperature) {
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID; //const char* deviceID = "0001";
   param1["temperature"] = temperature;
+  param1["ac_status"] = ac_status;
   param1["timestamp"] = getCurrentTime();
 
   String output;
@@ -143,16 +144,16 @@ void updateTemperature(int temperature) {
   serializeJson(doc, output);
   socketIO.sendEVENT(output);
 
-  Serial.print("Status Temperature: ");
+  Serial.print("[STATUS] Temperature: ");
   Serial.println(output);
 }
 
-void updateACstatus(bool ac_status) {
+void updateACstatus(bool new_status) {
   DynamicJsonDocument doc(1024);
   JsonArray array = doc.to<JsonArray>();
-
+  ac_status = new_status;
   array.add("update_ac_status");
-
+  
   JsonObject param1 = array.createNestedObject();
   param1["device_id"] = deviceID;
   param1["ac_status"] = ac_status;
@@ -217,7 +218,7 @@ void loop() {
     current_temperature = getTemperatureDHT();
     if (last_temperature != current_temperature){
       Serial.printf("[DHT Capture] Temperature: %d°C \n", current_temperature);
-      sendRegisterTemperature(current_temperature);
+      sendRegisterTemperature(current_temperature, ac_status);
       updateTemperature(current_temperature);
       last_temperature = current_temperature;
     }
@@ -235,6 +236,10 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
     case sIOtype_CONNECT:
       Serial.printf("[WebSocket] Connected! URL: %s\n", payload);
       socketIO.send(sIOtype_CONNECT, "/");
+
+      updateRelay(false); 
+      updateACstatus(false);
+      verificationAC(0);
       break;
     case sIOtype_EVENT:
     {
@@ -272,6 +277,7 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
           }
           verificationRelay();
           updateRelay(new_relay_status);
+          sendRegisterPIR(new_relay_status);
         }
         else {
           Serial.printf("[WebSocket] Server response: %s\n", payload);
@@ -373,6 +379,7 @@ void sendCodeAC(int temperature){
 
   updateACstatus(true);
   verificationAC(index+16);
+  sendRegisterTemperature(index+16, ac_status);
 }
 
 void sendCodeACOff() {
@@ -390,6 +397,7 @@ void sendCodeACOff() {
 
   updateACstatus(false);
   verificationAC(0);
+  sendRegisterTemperature(current_temperature, ac_status);
 }
 
 void sendConvertedRaw(const uint16_t* data_ticks, size_t size) {

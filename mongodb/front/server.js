@@ -61,6 +61,7 @@ const PresenceLog = mongoose.model('PresenceLog', new mongoose.Schema({
 const TemperatureLog = mongoose.model('TemperatureLog', new mongoose.Schema({
     device_id: String,
     temperature: Number,
+    ac_status: Boolean,
     timestamp: String
 }, { collection: 'temperature_logs' }));
 
@@ -285,6 +286,7 @@ io.on('connection', (socket) => {
             const novoLog = new TemperatureLog({
                 device_id: payload.device_id,
                 temperature: payload.temperature,
+                ac_status: payload.ac_status,
                 timestamp: payload.timestamp
             });
             await novoLog.save(); // Salva no Atlas!
