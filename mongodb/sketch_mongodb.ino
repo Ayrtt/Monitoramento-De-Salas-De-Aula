@@ -25,6 +25,7 @@ SemaphoreHandle_t pirSemaphore;
 DHT_Unified dht(DHT_PIN, DHTTYPE);
 
 bool presence = false;
+bool isPresenceActive = false;
 bool ac_status = false;
 unsigned long last_capture = 0;
 int last_temperature = 0;
@@ -275,6 +276,9 @@ void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length)
           } else {
             digitalWrite(RELAY_PIN, RELAY_OFF);
           }
+
+          isPresenceActive = new_relay_status;
+          
           verificationRelay();
           updateRelay(new_relay_status);
           sendRegisterPIR(new_relay_status);
@@ -305,7 +309,6 @@ bool wifiConnection(){
 
 void pir_manager_task(void *pvParameter) {
   unsigned long lastActivityTime = 0;
-  bool isPresenceActive = false;
 
   while (1) {
     if (xSemaphoreTake(pirSemaphore, 0) == pdTRUE) {
